@@ -111,7 +111,7 @@ public sealed class WorkspaceFileReader(IServiceScopeFactory scopes, IOptions<De
 
             var read = await cache.ReadAsync(
                 candidate.FullPath, candidate.RelativePath,
-                ExtractorRegistry.For(candidate.RelativePath),
+                ExtractorRegistry.For(candidate.RelativePath, candidate.FullPath),
                 _indexing.ExtractionTimeoutSeconds, ct);
             return new ReadFile(candidate, read, null);
         }

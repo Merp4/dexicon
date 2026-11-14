@@ -58,9 +58,10 @@ Discovery walks the tree and applies, **in order**:
    files it matches, after every rule above has run, so it narrows the set and cannot bring
    back a file an earlier rule dropped. An empty list means everything not excluded.
 6. **Size cap** — `max_file_bytes`, default 256 KB, for code and text. A PDF, DOCX, PPTX,
-   EPUB or HTML file has its own cap, `DEXICON__INDEXING__DOCUMENTMAXBYTES` (default
-   512 MB). A file over its cap is recorded as `skipped` with the reason, never dropped
-   without record.
+   EPUB or HTML file, and a `.jsonl` file that is a Claude Code transcript
+   ([below](#claude-code-session-transcripts)), has its own cap,
+   `DEXICON__INDEXING__DOCUMENTMAXBYTES` (default 512 MB). A file over its cap is recorded as
+   `skipped` with the reason, never dropped without record.
 7. **Binary sniff** — a NUL byte in the first 8 KB of a code or text file means binary,
    whatever the extension. Document formats are not sniffed.
 
@@ -403,7 +404,7 @@ used to carry ten copies of the same two globs.
 
 A source sets only what it is given. One added with no filters, or named when its corpus
 is created, sets none and follows the corpus for all four. The corpus summary returns the
-bottom layer as `configured`, with the separate cap for PDF, DOCX, PPTX, EPUB and HTML
+bottom layer as `configured`, with the separate cap for PDF, DOCX, PPTX, EPUB, HTML and Claude Code transcript
 files, so a form can show what following a default gives before anything is saved.
 
 **Null and empty are different, and the difference is the whole of it.** An unset field
@@ -1075,6 +1076,7 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 | PPTX | `.pptx` | DocumentFormat.OpenXml | MIT | **slide** | Slide notes included |
 | EPUB | `.epub` | VersOne.Epub | MIT | **chapter** | Reading order from `content.opf`; chapter HTML walked block by block |
 | JSON/YAML/TOML | `.json`, `.yaml`, `.yml`, `.toml` | — | — | line | Treated as text; structure-aware chunking is not attempted |
+| Claude Code transcript | `.jsonl`, when the first records have the transcript shape | `System.Text.Json` | MIT | none | The conversation: each user and assistant message under a time and speaker line, and one line per tool call. Tool results, thinking and bookkeeping records are left out. Any other `.jsonl` file is text |
 
 Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and recorded:
 
@@ -1127,6 +1129,116 @@ Take care comparing formats on a library that holds more of one than the other. 
 version of the fidelity measurement drew probes without requiring the other format to
 exist; 19 of 55 PDF titles have no EPUB, and it reported 64% against a ceiling of 65% and
 read it as a defect in PDF extraction.
+
+### Claude Code session transcripts
+
+A `.jsonl` file that is a Claude Code transcript is read as the conversation it records
+([D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation)). Claude Code writes one file
+for each session at `~/.claude/projects/<project>/<session>.jsonl` and one for each subagent at
+`<session>/subagents/agent-<id>.jsonl`; a workspace source whose root holds that folder indexes them. What the
+mount exposes, and who can read it afterwards, is covered in [09](09-deployment.md#indexing-claude-code-transcripts)
+and [10](10-security-secrets.md#what-a-transcript-corpus-holds).
+
+**Why it is an extractor.** Measured on one installation on 2026-11-12: 1,066 transcripts, 4.95 GB, of which 99 are
+session files and 967 are subagent files, written by 27 Claude Code versions (2.1.177 to 2.1.321). The median file is
+1.8 MB and the largest 879 MB. Of the bytes, user and assistant text is 1.4%. The rest is attachments (36.3% of the
+parsed content), tool results (22.6%), tool inputs (10.1%), copies of API requests, file-history snapshots and
+queue records. Line length has a median of 1,586 bytes, a 99th percentile of 25,222 and a maximum of 1,355,175.
+
+- Mounted as they are, 1,054 of the files are over the 256 KB text cap and are recorded as skipped.
+- With the cap raised, a file has no blank lines, and the chunker splits `text` on blank lines, so the chunks
+  are runs of JSON records, most of them tool output.
+
+**Which files.** The extension is shared with datasets and with the logs of other tools, so the walk and the reader
+look at the file. A file is a transcript when one of its first 20 non-blank lines, within the first 64 KB, is a JSON
+object with a string `sessionId` and either a `message` object (a `user` or `assistant` record) or a type that only
+Claude Code writes: `queue-operation`, `ai-title`, `custom-title`, `last-prompt`, `agent-name`, `bridge-session`,
+`file-history-snapshot`, `file-history-delta`, `atis-latch`, `frame-link`, `tools-used`, `cost-state`, `permission-mode`,
+`api-request`, `api-request-blob` and `api-request-shape`. The types that other tools use as well (`system`, `summary`,
+`mode`, `attachment`) do not decide on their own. All 1,066 transcripts matched, and none of 2,204 other `.jsonl` files on
+the same machine did: conversation datasets, training logs, generation samples, the logs of other assistants and the prompt
+history Claude Code keeps beside its transcripts, which has a `sessionId` and no `type`. Four rules were compared (the
+first line only; a user or assistant record in the first 20 lines; two records of one session; the first known record)
+and all four took every transcript and none of the other files, over a head of 256 KB. A rule that needs a message takes
+two transcripts fewer once the head is 64 KB, because each opens with a pasted prompt of 112 to 144 KB. The rule used takes
+them by their queue records, and it keeps out a log of another tool that carries a generic type and a session id, which
+would otherwise be indexed as the empty document of a file with no messages and not as the text it is. The implemented
+rule, run on 2026-11-14 over 1,121 transcripts and 2,626 other files, took all of the first and none of the second. A
+record that does not end within the first 64 KB is not judged, and a file with no match, such as a session whose first
+record is a message over 64 KB, is plain text under the text cap, as before.
+
+**What a document holds.** The header names the session and is followed by sections, each opening with a line of
+its time (UTC) and speaker:
+
+```
+Claude Code session transcript
+Title: <the last title the user set, else the last generated one>
+Session: <session id>
+Agent: <agent id>                  (subagent files)
+Branch: <git branch of the first record>
+Started: 2026-11-12 14:03Z
+
+[2026-11-12 14:03Z user]
+<the message>
+
+[2026-11-12 14:04Z assistant]
+<the reply>
+tool: Read src/Dexicon.Core/Foo.cs
+tool: Bash dotnet test --filter Foo
+```
+
+A new section starts when the speaker changes or ten minutes have passed since the section's header. The speakers
+are `user`, `assistant`, `task for this agent` (the message the parent agent wrote, in a subagent file),
+`message from another session`, `coordinator` and `background task` (the summary line of a task notification). A
+tool call is one line, `tool:` and the tool's name, then the first of `file_path`, `path`, `notebook_path`, `command`,
+`pattern`, `query`, `url`, `skill`, `description`, `prompt` and `name` that is a string, on one line and cut at 160
+characters. A shell command loses a leading `cd <directory> &&`. Because the text has blank lines between sections
+and between a message's paragraphs, the chunker splits it on them (a document is always chunked on blank lines).
+
+**What is left out.**
+
+- Tool results. Questions whose answer is only in a tool result cannot be answered from the index.
+- Thinking blocks: 337 of 14,699 sampled held any text (2.3%).
+- The summary Claude Code writes when it compacts a conversation. The messages it summarises stay in the file.
+- Context the harness adds to a user message: `system-reminder`, IDE state and local command output, removed
+  wherever they occur in the text. A slash command is kept as typed (`/review src`) and not as the prompt it expands to.
+- Attachments other than a prompt queued for the assistant, file snapshots, API request copies, and every other record
+  type.
+- A line that is not JSON, which is what a record cut short by a write in progress looks like, and a line over
+  16 MiB. Neither fails the file.
+- A string that is not valid Unicode: a lone surrogate escape, which a JavaScript writer produces for a message cut
+  inside an emoji, or bytes that are not UTF-8. The block that holds it is dropped and the rest of the file is read.
+
+A transcript with no message the reader keeps, such as a session that has only just begun, has no text and is recorded as
+empty (`no extractable text content`).
+
+A message typed while the assistant is working is recorded when it is typed (`queue-operation`) and again when it is
+delivered, as a user record or as an attachment, and in some versions only when it is typed: 147 of 1,556 such
+messages in 40 session files (9.4%) occur once in the file. The document holds the delivered copy, with the speaker
+the delivery names, and the typed copy only if it is never delivered. Two identical messages are both kept.
+
+**Size.** Over the 1,067 files present when this was measured, the documents total 82.5 MB from 4,976 MB of files
+(1.7%), and 67.3 MB from the 1,066 files under the default cap. A session file's document has a median of 68 KB, a 90th percentile of 802 KB and a maximum of 15.2 MB. A
+subagent file's has a median of 31 KB, a 90th percentile of 69 KB and a maximum of 0.25 MB. The extractor reads a
+file as a stream and holds the document, not the file: 879 MB were read in 4.4 s with a peak working set of 159 MB,
+and all 1,072 files (4,988 MB) in 14.7 s with a peak of 207 MB. The document cap
+(`DEXICON__INDEXING__DOCUMENTMAXBYTES`, 512 MB) applies to the file, so the 879 MB file is recorded as skipped with
+that reason. Raising the cap indexes it, and its document of 15.2 million characters would be about 17,000 chunks at the 885-character
+median chunk of the retrieval measurement.
+
+**A transcript grows while it is open.** Of 11 files being written, 10 grew over 50 minutes, each with the bytes
+before the growth unchanged. The next pass reads the whole file again and compares the new document with the one
+indexed. When what was appended added no conversation (tool output and bookkeeping records only), the documents are
+equal and nothing is embedded. Otherwise the whole document is chunked and embedded again, since chunks are not reused
+between versions of a file. In the 50 minutes the document of each of the 10 grew, by 4 to 21 KB for 0.2 to 1.7 MB
+appended. A session of 49 MB has a document of 480,000 characters, which is about 500 chunks at the default size and
+about 45 s of embedding at the 11 chunks per second measured for `embeddinggemma` on the maintainer's machine, for each
+pass in which that session changed; reading and extracting the file takes 0.65 s. A subagent file stops changing when
+the subagent ends. A file that has not changed costs the walk's stat and a read of its first 64 KB.
+
+**Retrieval.** On 14 transcripts (heads of up to 1 MB, 11.4 MB) and 39 questions with a known answer, the document
+ranked the answer higher than the raw file with the cap raised, from 175 chunks against 13,519
+([benchmarks](benchmarks.md#claude-code-transcripts-the-conversation-against-the-raw-file-2026-11-13)).
 
 ### Extraction is cached, and the cache is versioned
 
@@ -1749,9 +1861,10 @@ the job history.
 
 `file_chunk_states.settled_for` is a hash of the file's size, its modified time as the walk
 saw them, and the chunking settings (the fingerprint of an empty content hash, which carries
-the extractor and chunker versions, and for a Markdown file its own chunker version). A pass that finds the same key on a file's row skips
+the extractor and chunker versions, and for a Markdown file its own chunker version; for a `.jsonl` file taken as a
+transcript, the name of that extractor, since the size and time cannot show that a file which was text has become one). A pass that finds the same key on a file's row skips
 it: the file is not read, hashed or compared. A document (PDF, DOCX, PPTX, EPUB or HTML) is
-not opened at all. Any other file is still opened by the walk, which reads its first 8 KB for
+not opened at all, except that the walk reads the first 64 KB of a `.jsonl` file to tell a transcript from other data. Any other file is still opened by the walk, which reads its first 8 KB for
 a NUL byte before the key is compared, so for those files, code among them, a pass saves the
 full read and the hash and keeps one short read. The key is written when the pass reaches an
 outcome that reading the same bytes again would repeat:

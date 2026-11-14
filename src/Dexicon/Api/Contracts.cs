@@ -342,7 +342,7 @@ public sealed record CorpusSummary(
 /// <summary>The deployment's own filter values, the last layer a source's filters resolve through.</summary>
 /// <param name="MaxFileBytes">The cap for code and text files.</param>
 /// <param name="DocumentMaxBytes">
-/// The cap for PDF, DOCX, PPTX, EPUB and HTML files. Configuration sets it; no source or
+/// The cap for PDF, DOCX, PPTX, EPUB, HTML and Claude Code transcript files. Configuration sets it; no source or
 /// corpus setting changes it.
 /// </param>
 public sealed record ConfiguredFilters(bool UseGitignore, int MaxFileBytes, long DocumentMaxBytes);

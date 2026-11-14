@@ -69,13 +69,15 @@ public sealed class DocumentReader(CatalogDbContext db)
         if (sha is not { Length: > 0 }) return null;
 
         // The extractor is part of the key, so it has to be part of the lookup. Derived
-        // from the path the same way indexing derived it, and null for a format with no
-        // extractor, which has no row to find.
-        var extractor = ExtractorRegistry.For(relativePath)?.GetType().Name;
-        if (extractor is null) return null;
+        // from the path the same way indexing derived it, and empty for a format with no
+        // extractor, which has no row to find. An extension that an extractor takes only
+        // after looking inside the file (a transcript among the `.jsonl` files) names it
+        // here; a file it did not take has no row under that name, and reads as plain text.
+        var extractors = ExtractorRegistry.NamesFor(relativePath);
+        if (extractors.Count == 0) return null;
 
         var text = await db.FileTexts.AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Sha256 == sha && t.Extractor == extractor, ct);
+            .FirstOrDefaultAsync(t => t.Sha256 == sha && extractors.Contains(t.Extractor), ct);
 
         return text is null
             ? null

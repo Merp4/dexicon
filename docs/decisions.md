@@ -2947,6 +2947,90 @@ needs matching inside a word.
 
 ---
 
+### D-51 A Claude Code transcript is indexed as its conversation
+
+**Status.** Accepted and implemented, 2026-11-14.
+
+**Decision.** A `.jsonl` file whose first records have the shape of a Claude Code session transcript is read by an
+extractor (`ClaudeTranscriptTextExtractor`) on any workspace source. Its document is the conversation: the user's and the
+assistant's messages under a line naming the time and speaker, and one line for each tool call. Tool results, thinking,
+compaction summaries, injected context and every bookkeeping record are left out. The walk gives such a file the document
+cap and not the text cap. Any other `.jsonl` file is text, as it was. There is no new source kind and no setting. The layout,
+the detection rule and the costs are in [04](04-ingestion.md#claude-code-session-transcripts).
+
+**Why.** A list of suggestions asked for an assistant-conversation-log source, and the question was whether mounting the
+folder already did it. It does not do it usefully. On one installation (2026-11-12) the folder held 1,066 transcripts
+(4.95 GB, median 1.8 MB), 1,054 of them over the 256 KB text cap and recorded as skipped. User and assistant text is 1.4%
+of the bytes, and a file has no blank lines for the chunker to split on, so with the cap raised the chunks are runs of JSON
+records, most of them tool output.
+
+**Measured.**
+
+- **Detection.** A rule over the first 20 non-blank lines (a record with a string `sessionId` and a known `type`) matched
+  all 1,066 transcripts and none of 2,204 other `.jsonl` files on the machine. The implemented rule takes a `user` or
+  `assistant` record with a `message`, or a type only Claude Code writes, and took all of 1,121 transcripts and none of
+  2,626 other files when run on 2026-11-14. A rule that needs a message missed 2 of the 1,121 within a 64 KB head, each
+  opening with a pasted prompt over 100 KB; one that accepts any known type would take a log of another tool with a
+  generic type and a session id.
+- **Retrieval.** On 14 transcripts and 39 questions with a known answer, the conversation and tool-call lines answered a
+  question about the conversation higher than the raw file did (a paired difference in reciprocal rank of +0.24 at 256
+  tokens and +0.21 at 512, the intervals' lower bounds +0.001 and +0.048), from 175 chunks against 13,519. On the 14
+  questions about a tool call the two did not differ by a margin the questions could resolve. The tables, the questions' construction and the limits are in
+  [benchmarks](benchmarks.md#claude-code-transcripts-the-conversation-against-the-raw-file-2026-11-13).
+- **Content.** Tool-call lines cost the conversation nothing measurable (+0.023, interval -0.041 to +0.105) and answer
+  13 of 14 questions about a command or a file against 0 of 14 without them. Thinking blocks held text in 337 of 14,699
+  (2.3%).
+- **Appended files.** Of 11 files open for writing, 10 grew over 50 minutes and none was rewritten: the bytes before the
+  growth were identical. Reading and extracting a 49 MB session took 0.65 s; 879 MB took 4.4 s at a peak working set of
+  159 MB. A grown file's document grew by 4 to 21 KB in that time.
+- **Secrets.** 355 of 1,067 transcripts held a secret-shaped string; 29 of the documents did
+  ([10](10-security-secrets.md#what-a-transcript-corpus-holds)).
+
+**Rejected.**
+
+- *A source kind of its own.* The file walk, file identity, the settled key, cached text and re-indexing on change are what
+  a workspace source with an extractor already does, and the measurements asked for nothing a source kind would add. It
+  would have cost an API, a UI form, a migration and a second set of documents.
+- *Indexing the raw file under a raised `max_file_bytes`.* 77 times the chunks for the same files and a lower rank for the
+  conversation, as measured.
+- *Registering the extractor for the extension alone.* Every `.jsonl` file would take the document cap (512 MB, not 256 KB):
+  96 of the 2,234 other files on the machine are over 256 KB and are skipped today, and a training set would be read,
+  hashed, cached and embedded. The check of the first records is what keeps those files as they were.
+- *Keeping 200 characters of each tool result.* The conversation score moved by +0.051 (interval -0.025 to +0.158), 50% more
+  chunks and about 51 MB more text over the 1,067 files.
+- *Keeping the compaction summary.* It restates messages that stay in the file.
+- *A "last activity" time in the header.* It moved with every record appended, tool output included, so every pass found
+  the document changed and embedded the whole file. A test pins that a transcript that gained only tool output is not
+  embedded again.
+- *Reusing the chunks of a file that grew.* The indexer replaces all chunks of a changed file; a transcript is no different.
+  The cost is in [04](04-ingestion.md#claude-code-session-transcripts).
+
+**Consequences.**
+
+- No migration, and `ExtractorVersions.Current` stays 6: the extractor has its own name in `file_texts` and no row exists
+  under it. The version is one number for every extractor, so a later change to this extractor's output bumps it for
+  all of them and extracts every cached document again.
+- A transcript of 256 KB or less that an earlier version indexed as text (13 of 1,072 here) is read again on the first
+  pass, because the settled key names an extractor that was chosen from the file's first bytes. The key of every other
+  file is unchanged, so no other file is read again. A transcript over 256 KB was recorded as skipped and is read on
+  the first pass. Each pass opens every `.jsonl` file of a source for its first 64 KB, settled or not (30 tracked in
+  the largest repository on the maintainer's machine, 5 in the next).
+- An uploaded `.jsonl` file is still stored as text. The upload path chooses its extractor from the file name alone
+  (`DocumentService.ExtractorFor`), and a transcript needs the first records as well.
+- The format is not documented and changed across the 27 Claude Code versions measured. The reader keeps what it
+  recognises and skips the rest, so a change that renames `message` or `content` yields documents with less text and no
+  error. A transcript with no message the reader keeps is recorded as empty ("no extractable text content").
+- A message typed while the assistant works and never recorded again as delivered is retired by a later message of the same
+  text, so a version that records only the typed copy shows "continue" once where it was sent twice.
+- Other assistants' logs are not read. They are other formats; the rule for `.jsonl` leaves them as text.
+- A session that is open is read again whenever it gains conversation, and embedded again whole.
+
+**Revisit when** an open session's re-embedding is a cost people notice: chunks that a file keeps between versions would be
+reused, which the indexer does not do for any format. Or when the shape of a transcript changes enough that the
+reader's output loses messages, which the sniff would not report.
+
+---
+
 ## Resolved questions
 
 | # | Question | Needed by | Current lean |

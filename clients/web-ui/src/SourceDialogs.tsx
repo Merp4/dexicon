@@ -211,7 +211,7 @@ function FileFilterFields({ value, onChange, fallback, documentMaxBytes }: {
         hint={
           <>
             For code and text files. Larger ones are skipped and listed as skipped. PDF, DOCX, PPTX,
-            EPUB and HTML files have their own limit{documentMaxBytes ? `, ${formatBytes(documentMaxBytes)}` : ''},
+            EPUB, HTML and Claude Code transcript files have their own limit{documentMaxBytes ? `, ${formatBytes(documentMaxBytes)}` : ''},
             set by the server.
           </>
         }

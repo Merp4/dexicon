@@ -282,6 +282,43 @@ Two things that are not obvious:
 Read-only is not decoration. Dexicon reads your files and is structurally incapable of
 writing to them; keep the `:ro` when you add a mount.
 
+### Indexing Claude Code transcripts
+
+Claude Code keeps a transcript of every session and every subagent under `~/.claude/projects`
+(`%USERPROFILE%\.claude\projects` on Windows). Mounted under the workspace root, the folder is
+searchable as conversations ([04](04-ingestion.md#claude-code-session-transcripts)):
+
+```yaml
+# docker-compose.override.yml
+services:
+  dexicon:
+    volumes:
+      - /path/to/home/.claude/projects:/workspaces/claude-projects:ro
+```
+
+Create the empty `claude-projects` directory under `WORKSPACE_ROOT` first, as above, then add a workspace source
+at `claude-projects` to a corpus of its own. A `.jsonl` file is recognised as a transcript by its first records, so the
+source needs no setting for it.
+
+- **The size cap is the document cap.** `DEXICON__INDEXING__DOCUMENTMAXBYTES` (512 MB) decides which transcripts are
+  skipped, where a text file has the 256 KB cap. The 1,067 files measured had one over it (879 MB, a session that was
+  still open), recorded as skipped with that reason.
+- **The folder holds other files.** Beside the transcripts Claude Code writes small `.json` files for each subagent (a
+  `meta.json` and a `prefix.json`), saved tool output under `tool-results/` (`.txt`) and memory notes under `memory/`
+  (`.md`). They are indexed as the text they are, under the 256 KB cap: in the folder measured, 1,608 `.json`, 281
+  `.txt` and 324 `.md` files. An exclude glob such as `**/*.json` leaves a kind out of the source.
+- **What it costs.** The 1,066 transcripts under the default cap (4,097 MB) become 67.3 MB of text, which at the median chunk of the
+  retrieval measurement (885 characters) is about 76,000 chunks and about 1.9 hours of embedding at 11 chunks per second
+  on the machine measured. After the first pass only a transcript that gained conversation is embedded again, and it is
+  embedded whole ([04](04-ingestion.md#claude-code-session-transcripts) gives the cost for an open session).
+  `DEXICON__INDEXING__REFRESHMINUTES` (off by default) decides how often an open session is picked up.
+- **Who can read it.** A transcript holds what passed through the session, pasted files and credentials among it, and a key
+  that reaches the corpus reads it all. Give the corpus its own name and key
+  ([10](10-security-secrets.md#what-a-transcript-corpus-holds)).
+
+A transcript written on one machine and mounted on another reads the same: the path of each file under the source is
+the project directory name Claude Code derived from the working directory, such as `C--Users-name-source-repos-app`.
+
 ## Configuration
 
 Settings are made in `.env` by the `DEXICON_*` name in the first column. `docker-compose.yml`
@@ -304,7 +341,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_INDEXING_CHUNKSIZE` | `DEXICON__INDEXING__CHUNKSIZE` | `256` | Chunk size in tokens for a new corpus, from 64 to 8192. An existing chunk set stores its own, so this migrates nothing and costs no reindex. Measured; see D-31's amendment. A value outside the range is logged as an error at startup, and a corpus created without a size of its own is then refused with 503. |
 | `DEXICON_INDEXING_CHUNKOVERLAP` | `DEXICON__INDEXING__CHUNKOVERLAP` | `32` | Overlap in tokens, an eighth of the size, from 0 to one less than the size. Sweeping it found nothing to gain from more. Checked at startup like the size. |
 | `DEXICON_INDEXING_MAXFILEBYTES` | `DEXICON__INDEXING__MAXFILEBYTES` | `262144` | Default per-source size cap, for text and code. |
-| `DEXICON_INDEXING_DOCUMENTMAXBYTES` | `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX). 512 MB. A memory limit, because extraction holds the document's text. |
+| `DEXICON_INDEXING_DOCUMENTMAXBYTES` | `DEXICON__INDEXING__DOCUMENTMAXBYTES` | `536870912` | Size cap for extracted formats (PDF, EPUB, DOCX, PPTX, HTML) and Claude Code transcripts. 512 MB. A memory limit, because extraction holds the document's text. |
 | `DEXICON_INDEXING_EXTRACTIONTIMEOUTSECONDS` | `DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS` | `300` | How long a file may go on reading itself during extraction before it is abandoned. `0` disables it. A workspace file is recorded as failed and retried on a later refresh. An uploaded file is listed under `failed` in the upload response and no document record is created for it (its bytes stay in the blob store until the next start deletes them), so sending it again extracts it again, for the full budget each time; a stored document whose re-extraction times out or fails on the server keeps its previous text and is retried on a later pass. Bounds a file that keeps reading, and the parse of HTML (a file or an EPUB chapter), which is cancelled when the budget passes; it does not bound wall-clock time in the other readers. |
 | `DEXICON_INDEXING_REFRESHMINUTES` | `DEXICON__INDEXING__REFRESHMINUTES` | `0` | Automatic refresh interval in minutes. `0` = manual only. A corpus a job is working on is skipped ([04](04-ingestion.md#when-the-catalogue-cannot-be-written)). |
 | `DEXICON_INDEXING_MAXCONCURRENTCORPORA` | `DEXICON__INDEXING__MAXCONCURRENTCORPORA` | `4` | How many corpora may be indexed at once. Two jobs on one corpus are still excluded, by the lease. Costs a catalogue connection and the memory of the documents in flight per worker; the embedding endpoint and the parser are bounded separately, so raising this does not multiply either. |
