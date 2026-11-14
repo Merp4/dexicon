@@ -526,6 +526,12 @@
               "null",
               "string"
             ]
+          },
+          "phrase": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -541,6 +547,12 @@
         "properties": {
           "query": {
             "type": "string"
+          },
+          "phrase": {
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "mode": {
             "$ref": "#/components/schemas/SearchMode"
@@ -1062,6 +1074,12 @@
               "null",
               "string"
             ]
+          },
+          "phrase": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1167,6 +1185,12 @@
         "properties": {
           "query": {
             "type": "string"
+          },
+          "phrase": {
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "mode": {
             "$ref": "#/components/schemas/SearchMode"

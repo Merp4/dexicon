@@ -530,6 +530,13 @@ public sealed record JobSummary(
 /// Collapse hits that are the same document in another format. Null defaults to true;
 /// false returns both, which is how two extractors get compared on one title.
 /// </param>
+/// <param name="Phrase">
+/// Words every hit must contain, in this order, ignoring case and punctuation: "chunk set id"
+/// finds chunk_set_id. In hybrid and semantic mode every chunk in scope that contains it is a
+/// candidate, so a short result is a complete one; keyword mode only considers chunks that share a
+/// word with the query. A blank <paramref name="Query"/> then searches for the phrase itself.
+/// Costs query time on a large corpus; docs/05-search.md has the figures.
+/// </param>
 public sealed record SearchApiRequest(
     string Query,
     IReadOnlyList<string>? Corpus = null,
@@ -541,7 +548,8 @@ public sealed record SearchApiRequest(
     string? Symbol = null,
     int? MaxCharsPerHit = null,
     bool? DistinctTitles = null,
-    string? Section = null);
+    string? Section = null,
+    string? Phrase = null);
 
 /// <summary>
 /// One assembled passage for a query, for a caller with no agent loop. The filters are
@@ -556,6 +564,7 @@ public sealed record SearchApiRequest(
 /// </param>
 /// <param name="Neighbours">Chunks to include either side of each hit, for reading past what matched.</param>
 /// <param name="LineNumbers">Prefix each line with its number in the file. Off by default.</param>
+/// <param name="Phrase">As in <see cref="SearchApiRequest"/>: words every considered hit must contain, in order.</param>
 public sealed record ContextApiRequest(
     string Query,
     IReadOnlyList<string>? Corpus = null,
@@ -569,7 +578,8 @@ public sealed record ContextApiRequest(
     int? Neighbours = null,
     bool? LineNumbers = null,
     bool? DistinctTitles = null,
-    string? Section = null);
+    string? Section = null,
+    string? Phrase = null);
 
 /// <param name="ExpiresInDays">
 /// Days until the key stops working, up to 36,500 (about 100 years). Omitted or zero means it does
