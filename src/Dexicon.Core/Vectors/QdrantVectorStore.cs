@@ -96,11 +96,19 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     // the slow path writes under. That was safe while one job indexed at a time and is
     // not now several do — a read racing an Add is undefined, not merely stale.
     private readonly ConcurrentDictionary<string, byte> _ensured = new(StringComparer.Ordinal);
+    // A collection whose payload index creation failed is not in `_ensured`; this holds the time before
+    // which it is not tried again, so a persistent failure costs one attempt a minute and not one per call.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _indexRetryAt = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
+    private readonly TimeProvider _time;
+
+    /// <summary>How long after a failed payload index creation the collection's indexes are tried again.</summary>
+    internal static readonly TimeSpan IndexRetryDelay = TimeSpan.FromMinutes(1);
 
     public QdrantVectorStore(IOptions<DexiconOptions> options, ILogger<QdrantVectorStore> log)
     {
         _log = log;
+        _time = TimeProvider.System;
         var uri = new Uri(options.Value.Qdrant.Endpoint);
         _client = new QdrantClient(
             host: uri.Host,
@@ -109,11 +117,15 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             apiKey: options.Value.Qdrant.ApiKey);
     }
 
-    /// <summary>The store over a client the caller made, so that a test can put a fake gRPC invoker under it.</summary>
-    internal QdrantVectorStore(QdrantClient client, ILogger<QdrantVectorStore> log)
+    /// <summary>
+    /// The store over a client the caller made, so that a test can put a fake gRPC invoker under it, and
+    /// over a clock the test can move.
+    /// </summary>
+    internal QdrantVectorStore(QdrantClient client, ILogger<QdrantVectorStore> log, TimeProvider? time = null)
     {
         _client = client;
         _log = log;
+        _time = time ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -161,6 +173,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
     public async Task EnsureCollectionAsync(string collection, int dimensions, CancellationToken ct = default)
     {
         if (_ensured.ContainsKey(collection)) return;
+        if (IndexRetryPending(collection)) return;
 
         // One creator at a time, because two jobs starting together on a corpus's first
         // index would otherwise both find the collection absent and both create it.
@@ -168,6 +181,8 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         try
         {
             if (_ensured.ContainsKey(collection)) return;
+            // The collection exists and the caller before this one has just failed to index it.
+            if (IndexRetryPending(collection)) return;
 
             if (!await _client.CollectionExistsAsync(collection, ct))
             {
@@ -192,38 +207,64 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
                     collection, dimensions);
             }
 
-            await EnsureIndexAsync(collection, "corpus_id", PayloadSchemaType.Keyword,
+            var created = true;
+            created &= await EnsureIndexAsync(collection, "corpus_id", PayloadSchemaType.Keyword,
                 new PayloadIndexParams { KeywordIndexParams = new KeywordIndexParams { IsTenant = true } }, ct);
-            await EnsureIndexAsync(collection, "kind", PayloadSchemaType.Keyword, null, ct);
-            await EnsureIndexAsync(collection, "file_path", PayloadSchemaType.Keyword, null, ct);
-            await EnsureIndexAsync(collection, "language", PayloadSchemaType.Keyword, null, ct);
-            await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
-            await EnsureIndexAsync(collection, "section", PayloadSchemaType.Keyword, null, ct);
-            await EnsureIndexAsync(collection, "source_id", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "kind", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "file_path", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "language", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "section", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "source_id", PayloadSchemaType.Keyword, null, ct);
             // Every per-file operation filters on this - delete, file lookup, and the
             // per-file counts below - and it was the one term in those filters without
             // an index, so each of them narrowed on source_id and then walked the rest.
-            await EnsureIndexAsync(collection, "chunk_set_id", PayloadSchemaType.Keyword, null, ct);
+            created &= await EnsureIndexAsync(collection, "chunk_set_id", PayloadSchemaType.Keyword, null, ct);
 
-            _ensured[collection] = 0;
+            if (created)
+            {
+                _ensured[collection] = 0;
+                _indexRetryAt.TryRemove(collection, out _);
+            }
+            else
+            {
+                // The collection works without the missing index (a filter on the field scans instead), so
+                // the caller goes on. It is not remembered as set up: the next call after the delay tries
+                // the indexes again, and does not wait for a restart to do it.
+                _indexRetryAt[collection] = _time.GetUtcNow() + IndexRetryDelay;
+            }
         }
         finally { _ensureLock.Release(); }
     }
 
-    private async Task EnsureIndexAsync(string collection, string field, PayloadSchemaType type,
+    /// <summary>True while a failed payload index creation on this collection is waiting out its delay.</summary>
+    private bool IndexRetryPending(string collection) =>
+        _indexRetryAt.TryGetValue(collection, out var at) && _time.GetUtcNow() < at;
+
+    /// <summary>
+    /// Create one payload index. Qdrant answers creating an index that is already there with success
+    /// (measured on v1.20.1, including for a changed schema), so a failure here is a real one: Qdrant
+    /// unreachable, a timeout, a refusal. It is logged as a warning and returned, not thrown.
+    /// </summary>
+    private async Task<bool> EnsureIndexAsync(string collection, string field, PayloadSchemaType type,
         PayloadIndexParams? indexParams, CancellationToken ct)
     {
         try
         {
             await _client.CreatePayloadIndexAsync(collection, field, type, indexParams, cancellationToken: ct);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            // Creating an index that already exists is not an error worth failing a
-            // startup over, but it is worth logging: a genuinely broken index creation
-            // would otherwise look identical to a no-op.
-            _log.LogDebug(ex, "Payload index {Field} on {Collection} not created (likely already present)",
-                field, collection);
+            _log.LogWarning(ex,
+                "Payload index {Field} on {Collection} was not created. Searches that filter on it return the same results, " +
+                "more slowly; creation is tried again after {Delay}",
+                field, collection, IndexRetryDelay);
+            return false;
         }
     }
 

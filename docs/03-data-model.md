@@ -478,6 +478,12 @@ points from that corpus when filtered to a different one.
 { "field_name": "section",      "field_schema": "keyword" }
 ```
 
+The indexes are created when a collection is first used. Qdrant answers creating an index that is
+already there with success, so a failure (Qdrant unreachable, a timeout, a refusal) is logged as a
+warning that names the field. The collection is used without the missing index, and a filter on that
+field scans instead, returning the same results more slowly. The next use of the collection after one
+minute tries every index again, so a restart is not needed to create it.
+
 `content` has no payload index. Keyword search runs on the `sparse` vector. A search with a
 `phrase` adds a `match.phrase` condition on `content`, which Qdrant evaluates without an index by
 tokenising the text of each chunk the query reaches ([05](05-search.md#exact-phrases)).
