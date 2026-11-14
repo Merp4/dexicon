@@ -253,6 +253,8 @@ examined.
 
 ### Why not a window over the ranking, or an index
 
+The decision is [D-50](decisions.md#d-50-a-search-can-ask-for-a-phrase-and-qdrant-checks-the-stored-text).
+
 Two alternatives were weighed before this one. The first keeps the hits of the usual
 candidate window whose text holds the phrase. It adds little to the query (in the three larger corpora a
 window of 400 took a median 71 to 100 ms and carried 1.0 to 2.4 MB of text), but the window

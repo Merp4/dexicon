@@ -2858,6 +2858,95 @@ filter taking a list of sections would give.
 
 ---
 
+### D-50 A search can ask for a phrase, and Qdrant checks the stored text
+
+**Status.** Accepted and implemented, 2026-11-14.
+
+**Decision.** `POST /api/search`, `POST /api/context` and the `search_index` tool take a `phrase`: the words every hit
+must contain, in that order. The request adds a `match.phrase` condition on the payload field `content` to the filter that
+both prefetches and the final query use, so Qdrant reads the stored text of the chunks the query reaches and every chunk in
+scope that holds the phrase is a candidate. `content` has no payload index and none is added. A blank `query` with a
+`phrase` searches for the phrase. The returned window is centred on the phrase. A phrase with no letter or digit, or longer
+than 500 characters, is refused (400 `Invalid phrase`, a tool error over MCP) because Qdrant matches the first against
+nothing. What it matches and what it costs are in [05](05-search.md#exact-phrases).
+
+**Why.** The sparse vector is a bag of terms with no positions, so the index cannot answer whether words follow each
+other. The text of every chunk is stored, so the question can be asked of the text at query time, for the searches that ask
+it, and index size, memory and indexing time stay as they were.
+
+**Measured.** Against a live Qdrant 1.20.0 holding 261,135 chunks in 12 corpora, with phrases of 3 to 6 words taken from
+random chunks.
+
+The first design kept the hits of the usual candidate window whose text holds the phrase. 80 phrases per corpus were
+searched for as the query in `hybrid` mode, and the chunk a phrase came from was inside a window of 400 for:
+
+| | chunks | inside the window |
+|---|---|---|
+| docs | 297 | 100% (the window holds everything) |
+| books | 28,535 | 75% |
+| papers | 191,703 | 60% |
+| code | 24,361 | 75% |
+
+By the document frequency of the phrase's rarest word (estimated from 1,500 random chunks per corpus, the three larger
+corpora): under 0.2% of chunks 93%, 0.2% to 2% 69%, 2% to 20% 53%. A window of 500 added 0 to 4 points. A short result
+could not be told from a complete one.
+
+The `match.phrase` condition, 12 phrases per corpus, `limit` 10, median milliseconds for one query (single runs on a
+shared host):
+
+| scope | chunks | `hybrid` without / with | `keyword` without / with |
+|---|---|---|---|
+| code | 24,361 | 79 / 900 | 27 / 363 |
+| books | 28,535 | 90 / 770 | 24 / 294 |
+| papers | 191,703 | 158 / 2,525 | 16 / 642 |
+| every corpus | 261,135 | 129 / 2,646 | 18 / 417 |
+
+The slowest query was a very common phrase over every corpus: 4.7 seconds in `hybrid`, 0.4 in `keyword`. The chunk a
+phrase came from was returned for 35 of 36 phrases in that run and 59 of 60 in a second run on the papers corpus; the
+second run's miss was a phrase in more chunks than the 160-candidate window holds. Qdrant selected the chunks that a
+reference tokeniser (a word is a run of Unicode letters and digits) selected for all of 200 phrase variants on the docs
+corpus. The condition was also run through the .NET client against a throwaway Qdrant 1.20.0 in `hybrid`, `semantic` and
+`keyword` mode.
+
+**Rejected.**
+
+- *Keeping the hits of the candidate window that hold the phrase.* No added cost, and the recall above. It stays a
+  possibility only for a caller who wants a substring match, which the by-word rule cannot give.
+- *A full-text payload index on `content` with `phrase_matching`.* It makes the condition cheap and adds index size and
+  memory to every collection, including those of corpora that never use a phrase. The largest corpus here has 191,703
+  chunks. Not built and not measured.
+- *Substring matching.* `refresh` would find `RefreshAsync`. Qdrant's unindexed condition is by word, and a substring test
+  needs the text in the application, which is the first alternative.
+
+**Consequences.**
+
+- **Cost is paid at query time, by the searches that use `phrase`.** About 9 to 20 times a plain search on a large scope
+  in `hybrid` mode, and 2.5 to 6.3 times less in `keyword` mode than in `hybrid`. The cost grows with the chunks in scope,
+  which makes naming the corpus the first narrowing.
+- **Matching is by word.** A run of letters and digits is a word, anything else separates words, case is ignored, the
+  words are adjacent and in order. `chunk set id` finds `chunk_set_id`; `refresh` does not find `RefreshAsync`. There is no
+  stemming and no folding of accents, ligatures or Unicode normalisation forms.
+- **Phrase searches need Qdrant 1.15.0 or later**, where the condition was added. The bundled image is 1.20.0. How an older
+  external Qdrant answers one was not tested. A Qdrant release that changed how an unindexed phrase condition is
+  evaluated would show as errors or empty results on phrase searches only.
+- **Nothing limits how many phrase searches run at once.** Nothing limits searches in general either: no rate limit and no
+  deadline on the Qdrant calls. A phrase search occupies Qdrant for the times above.
+- **In `keyword` mode the candidates are the chunks that share a word with `query`**, and a query of only stop words and
+  single characters has none. The result's note says so. With `hybrid` or `semantic` every chunk in scope that holds the
+  phrase is a candidate, and a result shorter than `limit` is every match there is.
+- **With the `section` filter ([D-49](#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them))** the two
+  conditions both apply. They were not run together against a collection that has the `section` index.
+- **No migration.** Nothing is chunked, embedded or indexed again, no fingerprint or extractor version changes, and the
+  catalogue is as it was. `search_index` gains an optional argument, a result gains `phrase`, a request with neither a
+  query nor a phrase is a 400 `Query or phrase is required` (was `Query is required`), and `ContextResult.query` is the
+  query that ran.
+
+**Revisit when** phrase searches are frequent enough that their cost shows: a full-text index on `content` with
+`phrase_matching`, priced against index size per collection, or a limit on concurrent phrase searches. Or when a caller
+needs matching inside a word.
+
+---
+
 ## Resolved questions
 
 | # | Question | Needed by | Current lean |
