@@ -79,3 +79,12 @@ updates:
       # in the Dockerfile and CI together.
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
+      # The .NET images move with the target framework (net10.0 in Directory.Build.props), the
+      # SDK band in global.json and dotnet-version in ci.yml. A bump of the two images to 11.0
+      # leaves those three at 10, and the Dockerfile copies no global.json, so nothing in the
+      # image build holds the SDK to 10. Digest and patch updates still arrive. Move to a newer
+      # .NET by hand, in all four places together.
+      - dependency-name: "dotnet/sdk"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "dotnet/aspnet"
+        update-types: ["version-update:semver-major"]
