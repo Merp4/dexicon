@@ -119,7 +119,9 @@ of it came from, in the same order. A file path is relative to its source root r
 to the corpus, so a citation also carries `sourceRoot`, the root of the source the file came
 from (absent for an uploaded document, which has none, and an empty string for a source on
 the workspace root). The block headers name it when the passage spans more than one. Null fields are omitted, so `note`
-and `degradedReason` are absent rather than null when there is nothing to report. Enum
+and `degradedReason` are absent rather than null when there is nothing to report. `phrase` is
+the phrase searched, when the request had one, and `query` is then the phrase if the request's
+`query` was blank. Enum
 values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); the request's
 `mode` is case-insensitive, so `"hybrid"` is accepted.
 
@@ -127,7 +129,7 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 
 | Field | Default | Meaning |
 |---|---|---|
-| `query` | — | Required. Natural language, or a code fragment. |
+| `query` | — | Natural language, or a code fragment. The schema requires it, so send an empty string for a search by phrase alone; a request that leaves it out is also accepted when it has a `phrase`. |
 | `corpus` | every visible corpus | Names, `corpus` or `corpus:set`. |
 | `mode` | `hybrid` | `hybrid`, `semantic` or `keyword`. |
 | `limit` | 10 | Hits to consider, 1-50. The budget decides how many reach the passage. |
@@ -135,6 +137,7 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 | `neighbours` | 0 | Chunks to include either side of each hit, 0-5. |
 | `lineNumbers` | false | Prefix each line with its number in the file. |
 | `pathPrefix`, `source`, `language`, `symbol`, `section` | — | The search filters, unchanged. |
+| `phrase` | — | Keep hits that contain these words in this order, ignoring case and punctuation. With a blank `query` the phrase is the query. Costs query time on a large scope: [05](05-search.md#exact-phrases). |
 | `distinctTitles` | true | Collapse one document held in two formats. |
 
 **Budgets are characters, not tokens.** No tokenizer ships with Dexicon, and the model
@@ -212,7 +215,8 @@ media type should accept both.
 |---|---|---|
 | 400 | `Unknown or unreadable corpus` | The message, for example `Unknown corpus 'x'. Corpora this key can reach: a, b.` A name the request sent is shown up to 200 characters, then `...`, and only the first three of the unknown names are quoted, then `(and N more)`. A list of corpora is written up to 1,500 characters, ends at a whole name, and is followed by `(and N more)` when names were left out. |
 | 400 | `Unknown or unreadable corpus` | `Corpus 'x' was removed while this request waited.` `POST /api/corpora/{x}/documents` and `POST /api/corpora/{x}/documents/attach`, when the corpus is removed after the request resolved it and before the document is attached. Files of an upload that were attached before the removal went with the corpus. |
-| 400 | `Query is required` | None. `POST /api/search` and `POST /api/context` with a blank `query`. |
+| 400 | `Query or phrase is required` | None. `POST /api/search` and `POST /api/context` with a blank `query` and no `phrase`. |
+| 400 | `Invalid phrase` | `A phrase needs at least one letter or digit. ...` or `A phrase is limited to 500 characters; this one has 501.` The message does not repeat the phrase. `POST /api/search` and `POST /api/context`. |
 | 400 | `Unknown search mode` | `Unknown search mode 'fuzzy'. Expected hybrid, semantic or keyword.` The value is shown on one line and cut at 40 characters, with `...` after it. `POST /api/search` and `POST /api/context`. |
 | 400 | `Invalid expiry` | `expiresInDays is from 0 to 36,500, about 100 years, and 0 or leaving it out means the key does not expire. The key was not created.` `POST /api/tokens`. |
 | 400 | `Say which corpora`, `Corpus ids are required`, `Conflicting corpus reach` or `Too many corpus ids` | `An empty or missing corpusIds does not say whether the key reaches every corpus or none. Send allCorpora: true for every corpus, or allCorpora: false with corpusIds for those only; an empty list then reaches none.` for `PUT /api/tokens/{id}/corpora` with an empty or missing `corpusIds` and no `allCorpora`, and for `POST /api/tokens` with an empty `corpusIds` and no `allCorpora`. `Corpus ids are required` is `allCorpora: false` with no `corpusIds`, `Conflicting corpus reach` is `allCorpora: true` with a non-empty `corpusIds`, and `Too many corpus ids` is more than 1,000 distinct ids. A new key with neither field reaches every corpus. Nothing was saved. |

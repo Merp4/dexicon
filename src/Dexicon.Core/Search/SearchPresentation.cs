@@ -39,7 +39,12 @@ public static class SearchPresentation
     /// <param name="text">The chunk as it was indexed.</param>
     /// <param name="query">The query, used only to find where to centre.</param>
     /// <param name="maxChars">The budget. Non-positive returns the text unchanged.</param>
-    public static string Window(string text, string query, int maxChars)
+    /// <param name="phrase">
+    /// A phrase the chunk was kept for containing. When it is found, the window is centred on
+    /// its first occurrence rather than on the densest run of query terms, which can be
+    /// elsewhere in the chunk and would leave the reason the hit was returned out of it.
+    /// </param>
+    public static string Window(string text, string query, int maxChars, SearchPhrase? phrase = null)
     {
         if (maxChars <= 0 || string.IsNullOrEmpty(text) || text.Length <= maxChars) return text;
 
@@ -53,15 +58,29 @@ public static class SearchPresentation
             starts[i] = at;
         }
 
-        var centre = BestOffset(text, query);
-        var line = LineAt(starts, centre);
+        int centre;
+        int line;
+        var lastLine = -1;
+        if (phrase is not null && phrase.TryFind(text, out var phraseAt, out var phraseLength))
+        {
+            // The occurrence can wrap across lines, so every line it touches is kept.
+            centre = phraseAt + phraseLength / 2;
+            line = LineAt(starts, phraseAt);
+            lastLine = LineAt(starts, phraseAt + phraseLength - 1);
+        }
+        else
+        {
+            centre = BestOffset(text, query);
+            line = LineAt(starts, centre);
+        }
 
         // Grow outwards from the line the match is on, taking whichever neighbour is
         // cheaper, so the window keeps the match roughly central without spending its
         // whole budget on one very long line.
         var lo = line;
-        var hi = line;
-        var used = lines[line].Length + 1;
+        var hi = Math.Max(line, lastLine);
+        var used = 0;
+        for (var i = lo; i <= hi; i++) used += lines[i].Length + 1;
 
         while (used < maxChars)
         {

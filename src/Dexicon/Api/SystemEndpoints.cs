@@ -44,8 +44,8 @@ public static class SystemEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            if (string.IsNullOrWhiteSpace(body.Query))
-                return Results.Problem(title: "Query is required", statusCode: 400);
+            if (string.IsNullOrWhiteSpace(body.Query) && string.IsNullOrWhiteSpace(body.Phrase))
+                return Results.Problem(title: "Query or phrase is required", statusCode: 400);
 
             var result = await search.SearchAsync(rc.RequirePrincipal(), new SearchRequest
             {
@@ -62,6 +62,7 @@ public static class SystemEndpoints
                     ? Math.Clamp(n, 0, 100_000)
                     : SearchRequest.DefaultMaxCharsPerHit,
                 DistinctTitles = body.DistinctTitles ?? true,
+                Phrase = body.Phrase,
             }, ct);
 
             return Results.Ok(result);
@@ -83,8 +84,8 @@ public static class SystemEndpoints
             CancellationToken ct) =>
         {
             if (rc.RequireScope(Scopes.Search) is { } denied) return denied;
-            if (string.IsNullOrWhiteSpace(body.Query))
-                return Results.Problem(title: "Query is required", statusCode: 400);
+            if (string.IsNullOrWhiteSpace(body.Query) && string.IsNullOrWhiteSpace(body.Phrase))
+                return Results.Problem(title: "Query or phrase is required", statusCode: 400);
 
             var result = await context.BuildAsync(rc.RequirePrincipal(), new ContextRequest
             {
@@ -109,6 +110,7 @@ public static class SystemEndpoints
                 Neighbours = Math.Clamp(body.Neighbours ?? 0, 0, 5),
                 LineNumbers = body.LineNumbers ?? false,
                 DistinctTitles = body.DistinctTitles ?? true,
+                Phrase = body.Phrase,
             }, ct);
 
             return Results.Ok(result);

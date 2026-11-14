@@ -28,6 +28,7 @@ public sealed class ScopeExceptionHandler(ILogger<ScopeExceptionHandler> log) : 
         {
             ScopeResolutionException => (StatusCodes.Status400BadRequest, "Unknown or unreadable corpus"),
             UnknownSearchModeException => (StatusCodes.Status400BadRequest, "Unknown search mode"),
+            InvalidSearchPhraseException => (StatusCodes.Status400BadRequest, "Invalid phrase"),
             EmbeddingDimensionMismatchException => (StatusCodes.Status409Conflict, "Embedding dimension mismatch"),
             EmbeddingUnavailableException => (StatusCodes.Status503ServiceUnavailable, "Embedding service unavailable"),
             UnscopedQueryException => (StatusCodes.Status500InternalServerError, "Refused an unscoped query"),

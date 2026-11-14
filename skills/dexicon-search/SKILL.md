@@ -52,7 +52,7 @@ is the only one.
 ## Searching
 
 ```
-search_index(query, corpus?, mode?, limit?, pathPrefix?, source?, language?, symbol?, section?, maxCharsPerHit?, distinctTitles?)
+search_index(query, corpus?, mode?, limit?, pathPrefix?, source?, language?, symbol?, section?, phrase?, maxCharsPerHit?, distinctTitles?)
 ```
 
 Write the query as a **question or a description**, not keywords. "how are refresh tokens
@@ -61,6 +61,17 @@ revoked" outperforms "refresh token revoke" — the embedding model was trained 
 `mode` is `hybrid` by default, which blends meaning with exact terms and is the right
 choice almost always. Use `semantic` when the wording in the source is certainly different
 from yours; `keyword` when you want exact-match behaviour, or when embeddings are down.
+
+Add `phrase` when the words themselves are what you need, such as an error message or a
+term of art. Only chunks that hold those words in that order come back, ignoring case and
+punctuation: `refresh token` finds `refresh_token` but not `RefreshAsync`, because a
+run of letters and digits is one word. Every chunk in scope that holds the phrase is
+considered, so a short result is a complete one. That is read from the text of every chunk
+in scope, which takes seconds on a large corpus: name the corpus first. `mode: keyword` is
+cheaper but only considers chunks that share a word with `query`, so use it with the phrase
+alone or with a query that has the phrase's distinctive word in it. Send `query` as an empty
+string to search for the phrase alone (the argument is still required), or give both to rank
+the chunks that hold the phrase by a question.
 
 Narrow with `pathPrefix`, `source`, `language` or `symbol` before raising `limit`. Twenty
 results across the whole index is usually worse than eight from `src/Auth/`. `pathPrefix` is

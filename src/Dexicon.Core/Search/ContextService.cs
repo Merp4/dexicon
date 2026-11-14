@@ -47,11 +47,17 @@ public sealed record ContextRequest
     public bool LineNumbers { get; init; }
 
     public bool DistinctTitles { get; init; } = true;
+
+    /// <summary>Words every considered hit must contain, in this order; see <see cref="SearchRequest.Phrase"/>.</summary>
+    public string? Phrase { get; init; }
 }
 
 public sealed record ContextResult
 {
     public required string Query { get; init; }
+
+    /// <summary>The phrase every considered hit contains, as searched. Null for a request without one.</summary>
+    public string? Phrase { get; init; }
     public required SearchMode Mode { get; init; }
     public bool Degraded { get; init; }
     public string? DegradedReason { get; init; }
@@ -112,6 +118,7 @@ public sealed class ContextService(
             Symbol = request.Symbol,
             Section = request.Section,
             DistinctTitles = request.DistinctTitles,
+            Phrase = request.Phrase,
 
             // Whole chunks. A search window is centred on the matching terms and sized for
             // judging a hit; what goes into a prompt is the passage that was embedded.
@@ -130,7 +137,9 @@ public sealed class ContextService(
 
         return new ContextResult
         {
-            Query = request.Query,
+            // The query that ran: the phrase, when the request left the query blank.
+            Query = result.Query,
+            Phrase = result.Phrase,
             Mode = result.Mode,
             Degraded = result.Degraded,
             DegradedReason = result.DegradedReason,

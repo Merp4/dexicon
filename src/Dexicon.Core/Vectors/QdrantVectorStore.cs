@@ -568,7 +568,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         };
     }
 
-    private static Filter BuildFilter(SearchQuery q)
+    internal static Filter BuildFilter(SearchQuery q)
     {
         var f = new Filter();
         f.Must.Add(Keyword("kind", "chunk"));
@@ -604,6 +604,19 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
                 {
                     Key = "file_path",
                     Match = new Match { Text = q.PathPrefix },
+                },
+            });
+
+        // The chunk text is the only place the order of words is kept: the sparse vector is a
+        // bag of terms. `content` has no payload index and this adds none, so Qdrant tokenises
+        // the text of each chunk the query reaches (docs/05-search.md has what that costs).
+        if (!string.IsNullOrWhiteSpace(q.Phrase))
+            f.Must.Add(new Condition
+            {
+                Field = new FieldCondition
+                {
+                    Key = "content",
+                    Match = new Match { Phrase = q.Phrase },
                 },
             });
 

@@ -50,11 +50,24 @@ public sealed record SearchRequest
     /// is what comparing two extractors on one title needs.
     /// </summary>
     public bool DistinctTitles { get; init; } = true;
+
+    /// <summary>
+    /// Words every hit's text must contain, in this order, ignoring case and punctuation
+    /// (<see cref="SearchPhrase"/> has the rules). Null or blank searches without one. When
+    /// <see cref="Query"/> is blank the phrase is the query. It narrows the candidates
+    /// before ranking and nothing is stored for it, so a search that leaves it out is the
+    /// same query it always was.
+    /// </summary>
+    public string? Phrase { get; init; }
 }
 
 public sealed record SearchResult
 {
     public required string Query { get; init; }
+
+    /// <summary>The phrase every hit contains, as searched: whitespace collapsed. Null for a search without one.</summary>
+    public string? Phrase { get; init; }
+
     public required SearchMode Mode { get; init; }
     public bool Degraded { get; init; }
     public string? DegradedReason { get; init; }
@@ -81,6 +94,16 @@ public sealed class SearchService(
         Principal principal, SearchRequest request, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
+
+        // Before anything is read: a phrase that cannot match is refused, not searched.
+        var phrase = SearchPhrase.Create(request.Phrase);
+
+        // A caller who has only the phrase leaves the query blank. It is embedded and
+        // encoded as the query, and echoed in the result as the query that ran.
+        var queryText = phrase is not null && string.IsNullOrWhiteSpace(request.Query)
+            ? phrase.Text
+            : request.Query;
+
         var scope = await scopes.ResolveReadableAsync(principal, request.Corpus, ct);
 
         // Belt and braces with the repository guard: if resolution ever returned empty
@@ -96,7 +119,7 @@ public sealed class SearchService(
 
         // Qualified, so a result from a non-default set says which set it came from.
         var byId = scope.Targets.ToDictionary(t => t.Corpus.Id, t => t.QualifiedName, StringComparer.Ordinal);
-        var sparse = SparseEncoder.Encode(request.Query);
+        var sparse = SparseEncoder.Encode(queryText);
 
         // Resolved once, against the scope already authorised above, so naming a source
         // can only ever narrow the search, never reach into a corpus the caller cannot see.
@@ -118,8 +141,11 @@ public sealed class SearchService(
         // two queries. Merged by score afterwards, which is approximate across models.
         // The alternative is refusing, and refusing a legitimate cross-corpus search is
         // worse than an approximate merge that is documented as such.
+        var groups = 0;
+        var degradedGroups = 0;
         foreach (var group in scope.ByCollection)
         {
+            groups++;
             var corpusIds = group.Select(c => c.Id).Distinct(StringComparer.Ordinal).ToList();
             var chunkSetIds = group.Select(c => c.Set.Id).Distinct(StringComparer.Ordinal).ToList();
             var dims = group.First().Set.EmbeddingDimensions;
@@ -129,7 +155,7 @@ public sealed class SearchService(
             {
                 try
                 {
-                    dense = await EmbedQueryAsync(request.Query, group.First().Set.Target(), ct);
+                    dense = await EmbedQueryAsync(queryText, group.First().Set.Target(), ct);
                     if (dense.Length != dims)
                         throw new EmbeddingDimensionMismatchException(group.Key, dims, dense.Length);
                 }
@@ -140,13 +166,14 @@ public sealed class SearchService(
                     // avoid, so it is surfaced in the response, not only in the log.
                     log.LogWarning(ex, "Embedding unavailable; degrading search to keyword-only");
                     degraded = true;
+                    degradedGroups++;
                     degradedReason = "embedding service unavailable; keyword-only results";
                 }
             }
 
             var response = await vectors.SearchAsync(new SearchQuery
             {
-                Text = request.Query,
+                Text = queryText,
                 CorpusIds = corpusIds,
                 ChunkSetIds = chunkSetIds,
                 CollectionName = group.Key,
@@ -167,6 +194,7 @@ public sealed class SearchService(
                 Language = request.Language,
                 Symbol = request.Symbol,
                 Section = request.Section,
+                Phrase = phrase?.Text,
             }, dense, sparse, ct);
 
             if (response.Degraded)
@@ -203,7 +231,7 @@ public sealed class SearchService(
         // scored, and windowing before the merge would rank hits on a preview.
         if (request.MaxCharsPerHit > 0)
             foreach (var hit in ordered)
-                hit.Content = SearchPresentation.Window(hit.Content, request.Query, request.MaxCharsPerHit);
+                hit.Content = SearchPresentation.Window(hit.Content, queryText, request.MaxCharsPerHit, phrase);
 
         // An agent that searches a half-built index and gets nothing concludes the code
         // does not exist. Telling it the index is incomplete costs one sentence.
@@ -233,11 +261,15 @@ public sealed class SearchService(
             notes.Add($"{ordered.Count} of {request.Limit} asked for: the rest were the same documents again. "
                       + "Pass distinctTitles=false to see every copy.");
 
+        if (TermlessKeywordNote(phrase, sparse.IsEmpty, ordered.Count, request.Mode, groups, degradedGroups) is { } termless)
+            notes.Add(termless);
+
         var note = notes.Count > 0 ? string.Join(" ", notes) : null;
 
         return new SearchResult
         {
-            Query = request.Query,
+            Query = queryText,
+            Phrase = phrase?.Text,
             Mode = degraded ? SearchMode.Keyword : request.Mode,
             Degraded = degraded,
             DegradedReason = degradedReason,
@@ -253,6 +285,33 @@ public sealed class SearchService(
     private static string Described(IEnumerable<ScopedCorpus> targets) =>
         string.Join(", ", targets.Select(t => string.Create(CultureInfo.InvariantCulture,
             $"'{t.QualifiedName}' (last indexed {(t.Set.LastIndexedUtc is { } at ? $"{at:yyyy-MM-dd HH:mm}Z" : "never")})")));
+
+    /// <summary>
+    /// The note for a phrase search that keyword retrieval could not answer. Keyword mode retrieves by the
+    /// terms of the query, and a query made only of stop words and single characters has none (the sparse
+    /// vector drops them), so it returns nothing whatever the text holds. For a phrase search that reads as
+    /// "the phrase is not in the index", which is the one thing it does not mean.
+    ///
+    /// Only when nothing came back, and for a search that asked for hybrid or semantic only when every
+    /// collection fell back to keyword: with two collections, one can lose its embeddings while the other
+    /// is searched properly, and its empty answer is a real one.
+    /// </summary>
+    internal static string? TermlessKeywordNote(SearchPhrase? phrase, bool sparseIsEmpty, int hits,
+        SearchMode requested, int groups, int degradedGroups)
+    {
+        if (phrase is null || !sparseIsEmpty || hits > 0) return null;
+
+        if (requested == SearchMode.Keyword)
+            return "Keyword mode retrieves by the words of the query, and this query has none the keyword index "
+                   + "holds (stop words and single characters are not indexed), so it can match nothing whatever "
+                   + "the text says. Use hybrid or semantic mode to find the phrase.";
+
+        return groups > 0 && degradedGroups == groups
+            ? "The embedding service was unavailable, so the search fell back to keyword mode, and this query "
+              + "has no word the keyword index holds (stop words and single characters are not indexed). It can "
+              + "match nothing whatever the text says. Try again when the embedding service is back."
+            : null;
+    }
 
     /// <summary>
     /// The query vector for one MODEL, cached: agents repeat queries far more than people
