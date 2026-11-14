@@ -27,10 +27,10 @@ with no section here fails its release rather than publishing an undescribed one
   30 probes of 15 JSON-body operations returned no 5xx, and a restart with seeded stray files removed the
   unheld document and the strays and kept the three held ones. Existing sets hold no record until their
   first check, one minute after start (12 of 12 sets recorded a canary and a framing on the copy), so a
-  model or framing change made before the upgrade is not reported. The migrations index nothing again;
+  model or framing change made before the upgrade is not reported (that includes the `embeddinggemma-2` entry under Added). The migrations index nothing again;
   the next two items say what the first pass after the upgrade does read again.
-- **Every history corpus is read and embedded again once.** The key of a commit and of a stash carries
-  `GitCommit.DocumentVersion` and `GitStash.DocumentVersion`, both now 2, so the first pass after the upgrade
+- **Every history corpus is read and embedded again once.** The key of a commit carries
+  `GitCommit.DocumentVersion`, now 2 (a stash, new in this version, carries `GitStash.DocumentVersion`, also 2), so the first pass after the upgrade
   reads and chunks each commit again and embeds its chunks. `CodeChunker.Version` and `MarkdownVersion` are
   unchanged: no other document is chunked again (a Markdown file in the same rehearsal wrote 0 chunks). A
   commit's chunks are deleted before the new ones are embedded, so a commit is missing from search while it
@@ -43,20 +43,24 @@ with no section here fails its release rather than publishing an undescribed one
   one is indexed.** There is no migration and `ExtractorVersions.Current` stays 6. The settled key of a file
   names an extractor only when the walk chose a content-gated one, so the key of every other file is
   unchanged and no other file is read again. Each pass opens every `.jsonl` file of a source for its first
-  64 KB. In a rehearsal (the release code replacing the previous main on the same catalogue and Qdrant; real
+  64 KB. A source with many large transcripts costs more on its first pass: docs/09 ("Indexing Claude Code transcripts") sizes 1,066 transcripts
+  at about 76,000 chunks and 1.9 hours of embedding. In a rehearsal (the release code replacing the previous main on the same catalogue and Qdrant; real
   transcripts from one machine, three under the cap and three over it, plus a synthetic transcript, a
-  transcript with no message to keep and a JSONL log) the first pass read 7 of 9 files again and wrote 130
+  transcript with no message to keep and a JSONL log) the first pass read 8 of 9 files again (its job counted 7 done and 2 skipped) and wrote 130
   chunks in 20 s. The three small transcripts went from 259, 37 and 261 chunks to 6, 1 and 3, the three
-  over the cap (skipped before) became 66, 11 and 42 chunks, the transcript with no message became an empty
-  document ("no extractable text content"), and the log was unchanged. 40 other documents and 11 edge files
+  over the cap (skipped before) became 66, 11 and 42 chunks, the synthetic transcript went from 2 chunks to 1,
+  the transcript with no message became an empty document ("no extractable text content", which the job counts
+  as skipped), and the log was unchanged. 40 other documents and 11 edge files
   (empty, oversize, `.md`, `.json`, `.cs`, `.csv`, other JSONL) were not read again and kept their status,
   chunks, extracted characters and status text. A JSONL log that becomes a transcript by an append is read
   again, only it, and then holds the conversation (its log lines are no longer searchable).
 - **Rolling back to 0.6.14 is safe.** 0.6.14 started on the migrated catalogue, answered `/healthz` with the
   same 11 corpora, left the new columns alone, and 0.7.0 read the records back afterwards (`changedModels`
-  and `changedFramings` both empty). The history corpora are chunked again without sections on the way back
-  (the rehearsal rewrote 560 chunks of its transcript corpus in 56 s for 5 of 9 files), and upgrading again
-  repeats the figures above.
+  and `changedFramings` both empty). A history source with `includeStashes` on loses its stash documents on the first pass under 0.6.14, which does not know the setting (in a rehearsal on a small synthetic
+  repository, 2 stash documents and their 3 points went; the next 0.7.0 pass read all 5 documents again, wrote 9 chunks and restored them, with the stored setting unchanged).
+  The history corpora are chunked again without sections on the way back
+  (in the rehearsal, 0.6.14 read the 8 documents of an 8-commit history source again, wrote 8 chunks in 9.6 s, and none carried a section). A corpus of
+  Claude Code transcripts read 5 of 9 files again on the way back and wrote 560 chunks in 56 s. Upgrading again repeats the figures above.
 - **A path other than `/` and `/index.html` is a 404.** The host answered every GET that no endpoint
   claimed with the web UI page and a 200, for a signed-in caller: `/api/nope`, `/healthz/nope`,
   `/assets/nope` and `/corpora/e2e` all returned `index.html`. The UI keeps its screen in the URL
@@ -84,6 +88,10 @@ with no section here fails its release rather than publishing an undescribed one
   the top three chunks; code does not gain. The Models screen's Test limits suggests 1,805 tokens as the chunk size
   for `embeddinggemma` and 7,335 for `embeddinggemma-2:q8_0` (31,232 characters), which is outside what was
   measured ([benchmarks](docs/benchmarks.md#chunk-size-and-the-second-generations-context-2026-11-11)).
+  A chunk set already built on `embeddinggemma-2` holds raw document vectors, and its queries are framed from this version. The upgrade queues no
+  pass and `changedFramings` does not list the set (it has no framing record yet, and the record is made from the template the profile gives after
+  the upgrade), so a Full reindex of its corpus, or a refresh, which re-embeds because the template is part of the chunking fingerprint, brings it
+  level. A Hugging Face path (`hf.co/...`) or an `ollama cp` alias gets no built-in framing.
 - **Model check (D-46).** A chunk set stores the vector its model returns for one fixed sentence.
   A check embeds the sentence again before a pass writes to the set and every six hours, and a set whose
   answer has a cosine similarity below 0.999 to the stored one is listed in `GET /healthz` as
@@ -95,7 +103,8 @@ with no section here fails its release rather than publishing an undescribed one
   `GET /healthz` lists the sets whose record differs from the template the model's profile gives now as
   `changedFramings`, with both templates, and the health panel shows a notice. A built-in entry added by an
   upgrade changes the queries of every set on the model and queues no pass, so such a set otherwise
-  answers framed queries against raw vectors until it is reindexed. Only a full pass or a rebuild clears
+  answers framed queries against raw vectors until it is reindexed. This holds for a set that already has a record; a set with none (every set at the first
+  upgrade) is recorded with the template the profile gives after the upgrade. Only a full pass or a rebuild clears
   the report. The record is made without a provider answering, and like the model check it is advisory.
 - **Stash indexing (D-48).** A git-history source has a setting, `includeStashes` (default off), that adds one
   document per stash (`stashes/<date>-<sha12>`) and one per distinct version of an untracked file a stash holds
@@ -114,11 +123,11 @@ with no section here fails its release rather than publishing an undescribed one
   different case), and for a Markdown file the section is its heading, so the filter also matches a heading of that text. `section` has a keyword
   index, created by the first pass after the upgrade. On 470 queries quoting commit text in three history corpora, a search for a commit by
   its message with `section` set to `message` found it in 286 of 287 queries (277 unfiltered) and ranked it higher for 55 and lower for 4; a diff
-  query changed little. The history corpora hold 3% to 16% more chunks.
+  query changed little. The three history corpora hold 3% to 14% more chunks (16.4% on the clone measured under Upgrading).
 - **A search can ask for a phrase (D-50).** `POST /api/search`, `POST /api/context` and the `search_index` tool take an optional `phrase`: words every hit must contain,
   in that order, ignoring case and punctuation. The index holds no word positions, so Qdrant checks the stored text of the chunks the query reaches (a `match.phrase`
   condition on `content`). No index is added, nothing is chunked or embedded again and there is no migration; the cost is paid by the searches that use a phrase. Measured on a live
-  Qdrant 1.20.0 (median of one query, `hybrid`): 90 to 770 ms in a 28,535-chunk corpus and 158 to 2,525 ms in a 191,703-chunk one, 4.7 s for a very common phrase over every corpus;
+  Qdrant 1.20.0 (median of one query, `hybrid`): 90 ms without a phrase and 770 ms with one in a 28,535-chunk corpus, 158 and 2,525 ms in a 191,703-chunk one, 4.7 s for a very common phrase over every corpus;
   `keyword` mode is 2.5 to 6.3 times cheaper. Matching is by word: `chunk set id` finds `chunk_set_id`, and `refresh` does not find `RefreshAsync`. A blank `query` with a phrase searches
   for the phrase, and the returned window is centred on it. A phrase with no letter or digit, or over 500 characters, answers 400 `Invalid phrase` (a tool error over MCP). Over MCP
   `query` stays required, so a phrase-only search sends an empty string. It needs Qdrant 1.15.0 or later (the bundled image is 1.20.0), and nothing limits how many phrase searches run at
@@ -158,7 +167,7 @@ with no section here fails its release rather than publishing an undescribed one
 
 ### Verified against 0.6.14
 
-On the code of this release (`4937bce`) unless a line says otherwise. 606 expectations over twelve probe phases passed and none failed.
+On the code of this release (`4937bce`; the release commit changes only this file and the two OpenAPI documents) unless a line says otherwise. 606 expectations over twelve probe phases passed and none failed (the count includes the checks made on the control build before the candidate replaces it).
 
 - CI on `4937bce`: 3,673 tests, 3,671 passed, 2 skipped, 0 build warnings.
 - Three text files embedded with `embeddinggemma` by 0.6.14 and by this build into separate stores gave byte-identical vectors (largest difference 0.0), and nine
@@ -167,18 +176,20 @@ On the code of this release (`4937bce`) unless a line says otherwise. 606 expect
   `section` and `phrase` and a new description of `query`; the corpus configuration tool gains `history.stashes` and longer descriptions of `history` and `since`) and
   `GET /mcp`, now 405 `application/problem+json` with `Allow: POST` (it was 200 `text/html`).
 - Seven searches without a phrase returned the same hits with the same scores as the previous build on the same data. A phrase in `hybrid`, `semantic` and `keyword`
-  mode over REST search, REST context and MCP returned only chunks holding the words in order; 133 probes of matching, refusals and `section` with `phrase` passed.
+  mode over REST search, REST context and MCP returned only chunks holding the words in order; 119 probes of matching, refusals and `section` with `phrase` passed on this build.
 - Every history chunk has one section and none holds the text of another; the keyword index on `section` appears during the first pass and is absent before it; the
   catalogue and Qdrant agree after each step, including a return to 0.6.14 and back. 87 probes of `section` values a client should not send (wrong JSON types, 100,000
   characters, NUL, a lone surrogate, every other filter alongside) over REST search, REST context and MCP answered 200 or 400, never 5xx.
 - 40 real documents indexed from an empty catalogue and vector store: the catalogue's chunk counts equal the points in the store (0 mismatched, 0 orphaned), hybrid
   searches during the pass all answered 200, a process kill during a full pass replaced no record, and one refresh and then a full pass repaired the set. (Chunk totals: see Known issues.)
-- Web UI, signed in, on throwaway instances at 1440 and 375 px (on the commit before the last two features, which changed one line of dialog text, checked after): all eight
+- Web UI, signed in, on throwaway instances at 1440 and 375 px, on the commit before the last two features (they changed one line of web UI source, checked below): all eight
   views with an empty catalogue, a copy of the live catalogue and a catalogue of history, stash and Markdown corpora showed no response of 400 or more, no page overflow and no
   console error. Every data-changing action was taken with counts in the catalogue, in Qdrant and in blob storage before and after: approving the removal of a folder source,
   of a history source holding a stash (the card said 8 documents and 23 chunks, and 8 rows and 23 points went), of a chunk set, of a document and of a corpus; recording a request
   whose target was already gone as failed; revoking a key (REST and MCP answered 401 at once); deleting a corpus; a full reindex (228 searches around it all answered 200);
-  attaching and detaching a document; and signing out (the old token answered 401).
+  attaching and detaching a document; and signing out (the old token answered 401). The changed line is the size-limit hint in the file source dialogs. On this build the add and
+  edit dialogs read "PDF, DOCX, PPTX, EPUB, HTML and Claude Code transcript files have their own limit, 512.0 MB, set by the server" at 1440 px, and at 375 px they fit the
+  viewport (dialog right edge 350 px) with no horizontal page scroll.
 
 ### Known issues
 
