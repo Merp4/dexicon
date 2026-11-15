@@ -54,7 +54,7 @@ public sealed class PhraseSearchTests : IAsyncLifetime
     private async Task<SearchResult> SearchAsync(SearchRequest request)
     {
         await using var db = _harness.NewContext();
-        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder,
+        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
         return await search.SearchAsync(Reader, request, TestContext.Current.CancellationToken);
     }
@@ -280,7 +280,7 @@ public sealed class PhraseSearchTests : IAsyncLifetime
     public async Task AContextRequestPassesItsPhraseToTheSearch()
     {
         await using var db = _harness.NewContext();
-        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder,
+        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
         _harness.Vectors.OnSearch = q =>
         {

@@ -50,7 +50,7 @@ public sealed class PhraseToolTests : IAsyncLifetime
     private async Task<string> CallAsync(string query, string? phrase, string mode = "hybrid")
     {
         await using var db = _harness.NewContext();
-        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder,
+        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
         return await DexiconTools.SearchIndexAsync(Reader(), search, query, phrase: phrase, mode: mode);
     }

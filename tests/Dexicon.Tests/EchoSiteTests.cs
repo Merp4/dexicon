@@ -95,7 +95,7 @@ public sealed class EchoSiteTests : IAsyncLifetime
     private async Task<McpException> SearchAsync()
     {
         await using var db = _harness.NewContext();
-        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder,
+        var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
         return await Should.ThrowAsync<McpException>(() => DexiconTools.SearchIndexAsync(
             Holding(Scopes.Search), search, "anything", corpus: [Hostile]));
