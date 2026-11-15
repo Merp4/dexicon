@@ -16,6 +16,89 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.7.1 — 2026-11-15
+
+### ⚠️ Upgrading
+
+- **The default Qdrant and Ollama images moved.** `docker-compose.yml` and `.env.example` default `QDRANT_TAG` to `v1.20.1` (it was `v1.20.0`) and
+  `OLLAMA_TAG` to `0.40.16` (it was `0.40.12`). A `.env` that sets either variable keeps the image it names, and an `.env` copied from the previous
+  `.env.example` still names the old tags. An install that sets neither is moved the next time `docker compose up` recreates the container.
+  Both were applied to the live stack on 2026-11-14, before this release. Qdrant v1.20.1: both data volumes were archived and the Qdrant archive restored into a
+  scratch volume of the same size (3,852,602,228 bytes in 1,191 files); both collections kept their points (266,563 in all); 17 of 18 probe queries and 23 of 25
+  live answers were identical, and the others differed only in the order or choice among hits of equal score (largest score difference 0); the log of v1.20.1
+  held 0 warnings and 0 errors. Ollama 0.40.16: 25 live queries returned the same hits, 24 in the same order (largest score difference 0), and the log held 0 errors.
+- **Nothing is read again and there is no migration.** No migration, chunker version or extractor version changed. In a rehearsal of the upgrade from 0.7.0 over a
+  workspace of 86 files (real Claude Code transcripts, 40 real documents, edge files, a Markdown folder, a history source holding a stash, and 24 copies of one PDF),
+  a refresh of each of the 6 corpora read 0 files and wrote 0 chunks, every catalogue row kept its status, chunks and extracted characters, and the catalogue still
+  equalled Qdrant (6,240 points before and after).
+- **A PDF keeps the text it was first given.** Extracted text is cached by file hash and extractor version, and the extractor version stays 6, so a PDF indexed
+  before this release keeps its cached text and its chunks. A PDF extracted for the first time by 0.7.1 gets the text of the new, fixed grouping order (see Fixed),
+  which is not the text 0.7.0 most often produced: one 13-page PDF of 76,088 characters made 123 chunks in 0.7.0 and makes 136 in 0.7.1, and 40 real documents
+  indexed from empty made 2,897 chunks in 0.7.1 against 2,888 to 2,898 in 0.7.0. Two catalogues indexed before and after this release can therefore differ in chunk
+  counts for the same PDFs.
+
+### Fixed
+
+- **PDF text is extracted in the same order every time (#339).** PdfPig groups a page's letters into words once per text orientation (horizontal and the three
+  rotations) on a parallel loop, and appended each orientation's words to one list as the iterations finished. A page with both horizontal and rotated text (a margin
+  label, an axis title) came back with its blocks in a different order from one extraction to the next, with the same characters. The word extractor now runs with one
+  degree of parallelism. In 0.7.0, 24 copies of one PDF extracted together gave 3 distinct chunk lists; in 0.7.1, 24 gave 1. Serial grouping costs about 15% more
+  time on a generated 300-page PDF.
+- **The Documents list updates while an attachment is pending (#341).** The row read "pending" until the page was left and entered again. The list is now read
+  again every 3 seconds while any attachment is pending, and not at all otherwise; a read that fails is tried again on the next tick.
+- **A source at the workspace root is named in its job messages (#341).** A source whose path is empty showed as `''` in "Workspace path ... is not available",
+  "Source ... was not indexed because", and "Source ... is not a git repository"; they now read "(workspace root)".
+- **A payload index that cannot be created is a warning, and is tried again (#343).** The failure was logged at Debug and the collection was recorded as set up, so no
+  index was tried again until a restart. It is now a warning naming the field, and the next use of the collection after one minute tries every index again. Searches that filter on the field return the same results without the index, more slowly.
+
+### Verified against 0.7.0
+
+On the code of this release (`277aca2`; the commits after it change documentation and the skill, and the release commit changes only this file) unless a line says otherwise. 628 expectations over thirteen probe phases passed and none
+failed: the twelve phases of the 0.7.0 release (606) and one for this upgrade (22).
+
+- CI on `277aca2`: 3,685 tests, 3,683 passed, 2 skipped, 0 build warnings.
+- 10 full passes over 40 real documents from an empty catalogue for each build, 5 idle and 5 with the host's CPU and embedding service loaded. 0.7.0 made 2,888 chunks in 8
+  passes, 2,893 in one and 2,898 in one, and the chunks of 5 documents (all PDFs) differed between passes. 0.7.1 made 2,897 in all 10, and no document differed. The chunks
+  of 8 of the 40 documents (all PDFs) differ from the ones 0.7.0 most often made, in 3 of them by count (+13, -5 and +1; the extracted characters are equal); the other 32 are
+  identical, down to the SHA-1 of every chunk's content.
+- An upgrade rehearsal on a copy of the 2026-11-10 live catalogue: 23 to 25 migrations, `PRAGMA integrity_check` ok, 0 foreign key violations; the authenticated smoke test and
+  the detach probes reported 0 failures, 30 probes of 15 JSON-body operations returned no 5xx, and a restart with seeded stray files removed the unheld document and the strays and
+  kept the three held ones.
+- The same three text files embedded with `embeddinggemma` by 0.7.0 and by this build into separate stores gave byte-identical vectors (3 chunks, 2,405 components, largest
+  difference 0.0), and nine searches in the three modes returned the same hits with the same scores.
+- 42 MCP requests went to both builds on the same catalogue and all 42 answers were identical (0 differing fields); no tool changed.
+- The web UI, signed in, on a throwaway instance with a history source holding a stash, a Markdown corpus, a corpus whose folder is gone and a pending approval: all eight views at
+  1440 and 375 px answered no request with 400 or more, overflowed no page, raised no error and drew their icons, since lucide-react and the build tools moved. A text file attached on
+  the Documents screen read "pending" at 0.2 s and "indexed" with 5 chunks at 3.3 s without leaving the screen, and the list was not read again afterwards.
+- The logs of the 20 full passes held the same warnings for both builds (the first-start migration notes and one query-compilation note), and no probe stack of this release logged a
+  warning or error class that the 0.7.0 probe stacks did not, including no payload index warning, on Qdrant v1.20.1 and on v1.20.0.
+- AngleSharp 1.10.0 and 1.10.3 extracted the same text from 153 files (39 EPUB, 52 HTML, 46 generated edge cases and 16 saved pages): 0 different, 0 not extracted.
+
+### Known issues
+
+- A PDF first extracted by 0.7.0 or earlier keeps the cached text it was given, which may differ from what 0.7.1 would extract. A later extractor version bump
+  re-extracts and re-embeds every PDF.
+- `pathPrefix` is a word match on the path, not a prefix: Qdrant matches each word of the value (split at characters that are not letters or digits) as a whole word
+  anywhere in the path, in any order and ignoring case, so `src/Auth` also finds `lib/src/Auth/b.cs` and `src/Auth.Tests/t.cs` and does not find `src/Authorization/c.cs`.
+  The documents and the skill now say so; the tool's description still reads "Restrict to files under this path".
+
+### Changed
+
+- The skill changes (`dexicon-skill-version: 9`). One sentence says that a history source with its `stashes` setting on also holds a document per stash and per
+  distinct untracked file a stash holds; another says that `pathPrefix` matches by whole words, not by prefix. An installed copy of the skill at version 8 does not
+  have them; running `scripts/install-mcp.ps1` again upgrades installed copies. The hooks are unchanged.
+- The documentation was read against the code and corrected where they differed: the README, `SECURITY.md`, the 16 documents under `docs/` and the hooks README. Statements the
+  code contradicts are corrected (which files a chunker or extractor version change reprocesses, the admin sign-in throttle, the paths served without a key, the status of D-45 to D-51), and
+  the 0.7.0 features (git history and stashes, transcripts, the search notes, the health notices) are covered where a reader would look for them.
+- The .NET 10.0.15 patch packages: EF Core Design and Sqlite, AspNetCore.OpenApi, AspNetCore.Mvc.Testing and Extensions.ApiDescription.Server (#340); AngleSharp
+  1.10.0 to 1.10.3; Microsoft.NET.Test.Sdk 18.11.0 to 18.12.0 (tests only); the base image digests of `dotnet/sdk` and `dotnet/aspnet`.
+- The web UI is rebuilt with lucide-react 1.69.0 to 1.72.0 (its icons are in the bundle the image ships), vite 8.3.6 to 8.3.8, `@vitejs/plugin-react` 6.2.1 to 6.3.0
+  and `@tailwindcss/vite` 4.3.4 to 4.3.5 (`tailwindcss` moved with it in the lockfile; `package.json` keeps `^4.1.13`); `@testing-library/user-event` 14.6.8 to 14.6.9
+  is for tests only.
+- The CI and release workflows start Qdrant `v1.20.1`.
+- Dependabot ignores major versions of the packages and images that move with the target framework (`Microsoft.Extensions.*`, `Microsoft.EntityFrameworkCore*`,
+  `Microsoft.AspNetCore.*`, `dotnet/sdk`, `dotnet/aspnet`) and minor and major versions of `Microsoft.CodeAnalysis.CSharp`; configuration only (#325, #340).
+
 ## 0.7.0 — 2026-11-14
 
 ### ⚠️ Upgrading
