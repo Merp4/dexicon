@@ -88,7 +88,7 @@ failed: the twelve phases of the 0.7.0 release (606) and one for this upgrade (2
   distinct untracked file a stash holds; another says that `pathPrefix` matches by whole words, not by prefix. An installed copy of the skill at version 8 does not
   have them; running `scripts/install-mcp.ps1` again upgrades installed copies. The hooks are unchanged.
 - The documentation was read against the code and corrected where they differed: the README, `SECURITY.md`, the 16 documents under `docs/` and the hooks README. Statements the
-  code contradicts are corrected (an extractor change reprocessing every file, the admin sign-in throttle, the paths served without a key, the status of D-45 to D-51), and
+  code contradicts are corrected (which files a chunker or extractor version change reprocesses, the admin sign-in throttle, the paths served without a key, the status of D-45 to D-51), and
   the 0.7.0 features (git history and stashes, transcripts, the search notes, the health notices) are covered where a reader would look for them.
 - The .NET 10.0.15 patch packages: EF Core Design and Sqlite, AspNetCore.OpenApi, AspNetCore.Mvc.Testing and Extensions.ApiDescription.Server (#340); AngleSharp
   1.10.0 to 1.10.3; Microsoft.NET.Test.Sdk 18.11.0 to 18.12.0 (tests only); the base image digests of `dotnet/sdk` and `dotnet/aspnet`.
