@@ -16,6 +16,8 @@ public sealed record SearchRequest
     public IReadOnlyList<string>? Corpus { get; init; }
     public SearchMode Mode { get; init; } = SearchMode.Hybrid;
     public int Limit { get; init; } = 10;
+
+    /// <summary>A word match on the file path, not a prefix: see <see cref="SearchQuery.PathPrefix"/>.</summary>
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }

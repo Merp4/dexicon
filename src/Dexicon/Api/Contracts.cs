@@ -530,6 +530,13 @@ public sealed record JobSummary(
 /// Collapse hits that are the same document in another format. Null defaults to true;
 /// false returns both, which is how two extractors get compared on one title.
 /// </param>
+/// <param name="PathPrefix">
+/// A word match on the file path, not a prefix. The value is split into words at every character that is
+/// not a letter or a digit, and a hit's path must hold each of them as a whole word, in any order and
+/// anywhere in the path, ignoring case: "src/Auth" finds "lib/src/Auth/b.cs" and "src/Auth.Tests/t.cs"
+/// and not "src/Authorization/c.cs". The path is relative to the source's root, so the value cannot name
+/// the folder a source is rooted at; use <paramref name="Source"/> for that.
+/// </param>
 /// <param name="Phrase">
 /// Words every hit must contain, in this order, ignoring case and punctuation: "chunk set id"
 /// finds chunk_set_id. In hybrid and semantic mode every chunk in scope that contains it is a
@@ -565,6 +572,7 @@ public sealed record SearchApiRequest(
 /// </param>
 /// <param name="Neighbours">Chunks to include either side of each hit, for reading past what matched.</param>
 /// <param name="LineNumbers">Prefix each line with its number in the file. Off by default.</param>
+/// <param name="PathPrefix">As in <see cref="SearchApiRequest"/>: a word match on the file path, not a prefix.</param>
 /// <param name="Phrase">As in <see cref="SearchApiRequest"/>: words every considered hit must contain, in order.</param>
 public sealed record ContextApiRequest(
     string Query,
