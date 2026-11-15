@@ -74,9 +74,10 @@ everything `pending`. Reindex and watch the chunk counts come back.
 
 ## "A search says a corpus could not read its source"
 
-The search note reads `Corpus 'books:default' (last indexed 2026-11-01 08:30Z) could not
+The search note reads `Corpus 'books' (last indexed 2026-11-01 08:30Z) could not
 read its source on its last pass; results are from the index it had before.`, with `never`
-where the set has not completed a pass. The results are real but as old as that date: nothing
+where the set has not completed a pass, and `books:name` for a chunk set other than the
+default. The results are real but as old as that date: nothing
 already indexed is removed when a source is out of reach. The job message, on the **Jobs**
 screen and in `index_status`, says which source and why:
 

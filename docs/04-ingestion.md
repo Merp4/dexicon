@@ -721,7 +721,7 @@ What a document holds is per source:
 | `includeMessage` | true | Subject and body |
 | `includeStat` | true | Files touched, with ± counts |
 | `includeDiff` | false | The patch |
-| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document names the limit (`[diff not included: over the 65,536 byte limit for this source]`) |
+| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document names the patch size and the limit (`[diff of 70,000 bytes not included: over the 65,536 byte limit for this source]`) |
 | `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
 | `maxCommits` | — | Bound the walk to this many commits from the tip |
 | `keepIndexed` | false | With `maxCommits`: keep a commit once indexed, rather than letting each new commit push the oldest out (below) |

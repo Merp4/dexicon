@@ -352,7 +352,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_UPLOAD_MAXFILEBYTES` | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB per file. One upload request may carry ten files at this size plus 1 MiB of framing ([04](04-ingestion.md#upload--files-pushed-through-the-ui-or-api)). |
 | `DEXICON_ADMIN_PASSWORD` | `DEXICON__ADMIN__PASSWORD` | _(generated)_ | The admin password. Blank generates one on the first start and prints it to the log once. Set, it is applied on every start, which is the way back in after a forgotten one. Nothing in the UI or API changes it. |
 | `DEXICON_BOOTSTRAP_TOKEN` | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank mints nothing; keys are created under Access. Set, it must read `dex_<id>_<secret>` and is adopted as a key holding `search` and `ingest`. A malformed value fails the start (`A bootstrap token must start with 'dex_'.`) and the container restarts in a loop. |
-| `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | `Trace`, `Debug`, `Information`, `Warning` or `Error`. Any other value logs at `Information`. |
+| `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | `Trace` (also spelled `Verbose`), `Debug`, `Information`, `Warning` or `Error`, case-sensitive. Any other value logs at `Information`. |
 | `DEXICON_TAG`, `DEXICON_OWNER` | | `latest`, `merp4` | Which Dexicon image: `ghcr.io/<owner>/dexicon:<tag>`. See "Image tags". |
 | `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.1`, `0.40.16` | Which Qdrant and Ollama images. |
 | `DEXICON_GPU_DEVICE_IDS` | | `0` | Which GPU the embedder uses, as `nvidia-smi -L` numbers them. Read only when `docker-compose.gpu.yml` is applied. |

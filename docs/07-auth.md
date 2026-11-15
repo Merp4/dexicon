@@ -164,7 +164,9 @@ The auth middleware runs before routing and lets these through without a bearer:
 by exact path, or by the `/assets/` prefix, and ignores case. Every other path requires one,
 including `/healthz`, `/mcp` and `/openapi/integration.json`. A request without a
 credential to any other path, existing or not, is therefore a 401; with one, a path that does
-not exist is a 404 ([08](08-ui.md#shell)).
+not exist is a 404 ([08](08-ui.md#shell)). The static file middleware runs ahead of the auth
+middleware and serves the web root, which the image fills with `index.html` and the files
+under `assets/`.
 
 ## Enforcement
 
