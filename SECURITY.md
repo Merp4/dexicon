@@ -34,10 +34,14 @@ to your source tree, because workspace mounts are read-only. A malformed documen
 service down.
 
 **Not defended.** Anyone with access to the Docker socket, the data volume, or a published
-Qdrant port. Anyone holding the admin password, which reaches every corpus by design. Side
-channels (timing,
-per-corpus chunk counts) that might reveal that content exists without revealing what it
-is.
+Qdrant port. Anyone holding the admin password, which reaches every corpus by design.
+Secrets inside indexed content: a git history can hold a credential that was committed and
+later removed, and a Claude Code transcript can hold what a person pasted or a command
+printed. Any key that reaches that corpus can search it
+([history](docs/10-security-secrets.md#what-a-history-corpus-holds),
+[transcripts](docs/10-security-secrets.md#what-a-transcript-corpus-holds)). Side channels
+(timing, per-corpus chunk counts) that might reveal that content exists without revealing
+what it is.
 
 **Dexicon is a local developer tool with per-key scoping. It is not a multi-tenant SaaS
 boundary**, and describing it as one would invite uses it cannot carry. If you are

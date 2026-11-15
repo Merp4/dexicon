@@ -6,7 +6,8 @@
 search(query, scope, mode, limit, filters)
 ```
 
-- **`query`** — natural language or code fragment.
+- **`query`** — natural language or code fragment. It may be blank when `phrase` is given
+  ([Exact phrases](#exact-phrases)).
 - **`scope`** — one or more corpus names or ids (the `corpus` argument). Resolved against the caller's visible set.
   **Never optional in effect:** if the caller names nothing, the scope becomes every corpus
   they can see; if that set is empty, the request is an error, not an empty search. See
@@ -26,8 +27,8 @@ search(query, scope, mode, limit, filters)
   and a code fragment to find in the changes is `diff`. A source that leaves the diff out has no `diff` chunks, so
   that filter matches nothing there. For a Markdown file the section is the heading the chunk starts under, so
   `Installation` matches the chunks under a heading of that text. A chunk of a PDF, a slide deck or an EPUB has the
-  label of the page, slide or chapter it starts in (`Page 3`, `Slide 3`, `Chapter 3`), which names one position in every
-  document of the scope and is of little use as a filter. A chunk of a Claude Code transcript has no section. A value that no chunk carries matches nothing. A search over several corpora
+  label of the page, slide or chapter it starts in (`Page 3`, `Slide 3`, `Chapter 3`; an EPUB read without its manifest
+  uses the name of the chapter file), which names one position in every document of the scope and is of little use as a filter. A chunk of a Claude Code transcript has no section. A value that no chunk carries matches nothing. A search over several corpora
   applies the value to all of them, so a search for a commit section names the history corpus beside it. `section`
   selects the chunks that can match. The chunks either side of a hit that `neighbours` adds to `POST /api/context` are the adjacent chunks of
   the document, whatever their section.
@@ -45,9 +46,18 @@ search(query, scope, mode, limit, filters)
   against the already-authorised scope, so naming a source can only narrow a search,
   never reach into a corpus the caller cannot see.
 
+  `pathPrefix` is a word match on `file_path`, not an anchored prefix. The value is split into
+  words at every character that is not a letter or a digit, and a chunk matches when its path
+  holds each of those words as a whole word, in any order and anywhere in the path, ignoring
+  case. `src/Auth` matches `src/Auth/a.cs`, `lib/src/Auth/b.cs`, `Auth/src/x.cs` and
+  `src/Auth.Tests/t.cs`, and does not match `src/Authorization/c.cs`. A longer value narrows
+  further. Qdrant evaluates it as a text condition on the keyword-indexed `file_path`
+  (`QdrantVectorStore`).
+
 ## Retrieval
 
-Hybrid is a single Qdrant Query API call with two prefetches and server-side fusion. There
+Hybrid is a single Qdrant Query API call with two prefetches and server-side fusion (one
+prefetch, the dense one, when the query has no term the sparse vector holds). There
 is no client-side score merging within a collection. A scope that spans two embedding
 models runs one query per collection and merges the hits by score, which is approximate
 across models.
@@ -76,7 +86,7 @@ where `$scope` expands to
     { "key": "kind",      "match": { "value": "chunk" } },
     { "key": "corpus_id", "match": { "any": ["01JD...", "01JE..."] } }
     // plus the chunk_set_id of each corpus in scope, and any caller filters:
-    // source_id, file_path prefix, language, symbols, and for a phrase a
+    // source_id, file_path prefix, language, symbols, section, and for a phrase a
     // match.phrase condition on content
 ] }
 ```
@@ -155,7 +165,8 @@ caller is told; the result is not passed off as a full hybrid search. Over MCP t
 fact is a `! DEGRADED:` line after the header.
 
 If the query vector's length differs from the chunk set's pinned dimensions, the search is
-**refused**, not degraded, with a message naming both numbers and the rebuild action.
+**refused**, not degraded, with a message naming both numbers and the rebuild action (a 409
+from the REST endpoints, a tool error over MCP).
 Returning plausible results from a mismatched space is worse than returning none.
 
 ## Exact phrases
@@ -176,7 +187,8 @@ sends the query it always sent. The cost is paid at query time, by the searches 
 `query` ranks and `phrase` filters. Given both, the hits are the best matches for `query`
 among the chunks that hold the phrase. Given only `phrase`, with `query` sent as an empty string, the
 phrase is the query: it is embedded and encoded as one, and the result echoes it as `query`.
-The returned window is centred on the phrase rather than on the query terms.
+The window `POST /api/search` and `search_index` return is centred on the phrase rather than on
+the query terms; `POST /api/context` returns whole chunks.
 
 ### What matches
 
@@ -275,8 +287,9 @@ largest corpus here has 191,703 chunks.
 ## Result contract
 
 `POST /api/search` returns this JSON: camelCase property names, enums as their member
-names, and properties with no value omitted (`page`, `degradedReason` and `note` below
-appear only when set).
+names, and properties with no value omitted (`phrase`, `page`, `section`, `degradedReason` and
+`note` appear only when set; `section` is set for a Markdown heading, a page, slide or chapter,
+and a commit section, and a code chunk has none).
 
 ```jsonc
 {
@@ -297,7 +310,6 @@ appear only when set).
       "language": "csharp",
       "startLine": 120, "endLine": 168,
       "chunkIndex": 7,
-      "section": "TokenService.RefreshAsync",
       "symbols": ["TokenService", "RefreshAsync"],
       "content": "public async Task<TokenPair> RefreshAsync(...) { ... }"
     }

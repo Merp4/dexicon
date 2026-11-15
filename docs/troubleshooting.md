@@ -72,6 +72,29 @@ everything `pending`. Reindex and watch the chunk counts come back.
 
 ---
 
+## "A search says a corpus could not read its source"
+
+The search note reads `Corpus 'books:default' (last indexed 2026-11-01 08:30Z) could not
+read its source on its last pass; results are from the index it had before.`, with `never`
+where the set has not completed a pass. The results are real but as old as that date: nothing
+already indexed is removed when a source is out of reach. The job message, on the **Jobs**
+screen and in `index_status`, says which source and why:
+
+- `Workspace path 'p' is not available under /workspaces.`: the folder does not exist in the
+  container, because it is not under `WORKSPACE_ROOT` or the mount is away. Check with `docker compose exec dexicon ls /workspaces`.
+- `Source 'p' is not a git repository, so it has no history to index.`: a history source
+  needs the repository's root, with its `.git`.
+- `Source 'p' was not indexed because ...`: an ignore file or glob the walk cannot use,
+  or one past its limit. The message names the file and the line.
+
+A source at the workspace root appears as `(workspace root)` in these messages. The state is
+the outcome of the last pass, so a **Refresh** that reaches the source replaces it. A note
+that a corpus `had files that failed to embed on its last pass` means the embedding service
+did not answer for some files; they are missing from results until a later pass indexes them,
+and a refresh retries them.
+
+---
+
 ## "The mount path is not in the picker"
 
 The picker browses what is mounted at `/workspaces` inside the container, not your host
@@ -210,12 +233,14 @@ Dexicon does not fetch.
 ## "The container restarts in a loop"
 
 ```
-Unhandled exception. System.ArgumentException: A bootstrap token must start with 'dex_'.
+[12:00:00Z FTL] Dexicon terminated unexpectedly
+System.ArgumentException: A bootstrap token must start with 'dex_'. (Parameter 'presented')
 ```
 
 `DEXICON_BOOTSTRAP_TOKEN` in `.env` is set to something that is not a Dexicon key. A value
-there must read `dex_<id>_<secret>`; blank it, or use a key issued under **Access**, then run
-`docker compose up -d`.
+there must read `dex_<id>_<secret>` (a value that starts with `dex_` but has no second
+underscore fails with `Expected the form dex_<id>_<secret>.`); blank it, or use a key issued
+under **Access**, then run `docker compose up -d`.
 
 ---
 

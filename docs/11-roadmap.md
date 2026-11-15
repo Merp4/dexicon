@@ -262,7 +262,8 @@ it, and anyone proposing a reranker has a baseline to beat.
 - ✅ A 60-second quickstart in the `README`, and a screenshot generated from this
   repository's own documentation by `scripts/screenshot.mjs`.
 - ✅ Licence review of the full transitive dependency tree, NuGet and npm, re-runnable with
-  `scripts/licence-review.py` and failing CI on a copyleft dependency.
+  `scripts/licence-review.py`, which exits 1 on a copyleft licence in the shipped set. No CI
+  job runs it.
 - ✅ The repository made public, 2026-09-16, which is also what enables the provenance
   attestation the release workflow skips on a private repo.
 
@@ -299,13 +300,19 @@ row was asked for and has shipped.
 | ~~Skip a file the last pass finished with~~ | **Done** in 0.6.6. See [D-38](decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again). |
 | ~~Removals asked for by agents and decided by a person~~ | **Done** in 0.6.6, with the Approvals view. See [D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides). |
 | ~~A `destroy` scope for detaching a document~~ | **Done** in 0.6.7. See [D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own). |
+| ~~Report a model that changed under its name~~ | **Done** in 0.7.0. See [D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence). |
+| ~~Report a chunk set embedded under another document framing~~ | **Done** in 0.7.0. See [D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with). |
+| ~~Index git stashes and their untracked files~~ | **Done** in 0.7.0, as the `includeStashes` setting of a history source. See [D-48](decisions.md#d-48-a-history-source-can-also-index-the-repositorys-stashes). |
+| ~~Cut history documents in sections and filter a search on them~~ | **Done** in 0.7.0. See [D-49](decisions.md#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them). |
+| ~~Search for an exact phrase~~ | **Done** in 0.7.0, as `phrase` on search, context and `search_index`. See [D-50](decisions.md#d-50-a-search-can-ask-for-a-phrase-and-qdrant-checks-the-stored-text). |
+| ~~Index Claude Code transcripts as conversations~~ | **Done** in 0.7.0. See [D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation). |
 
 **Sizing an ask to index something new.** Most requests land on one of four seams, and
 the seam decides the size:
 
 | The ask | Where it goes | What it costs |
 |---|---|---|
-| A format with no extractor, read today as raw text or not at all: `.ipynb`, mbox, `.eml`, `.odt`, subtitles | An `ITextExtractor` in `ExtractorRegistry` | One class and its tests. No schema change and no new source kind. A file that a pass has settled is not read again ([D-38](decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again)), and registering an extractor changes neither the settle key nor the fingerprint, so files of that format are read through the new extractor when their size or modified time changes, or on a full pass. `ExtractorVersions.Current` is for output that changed. It is in every file's chunking fingerprint and settle key, so bumping it re-reads and re-embeds every file in every corpus. |
+| A format with no extractor, read today as raw text or not at all: `.ipynb`, mbox, `.eml`, `.odt`, subtitles | An `ITextExtractor` in `ExtractorRegistry` | One class and its tests. No schema change and no new source kind. A file that a pass has settled is not read again ([D-38](decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again)), and registering an extractor changes neither the settle key nor the fingerprint, so files of that format are read through the new extractor when their size or modified time changes, or on a full pass. An extractor that has to read the start of a file to claim it, as the Claude Code transcript extractor does for `.jsonl` ([D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation)), implements `IContentGatedExtractor`: the walk opens the first 64 KB of each such file on every pass and names the extractor it chose in the settled key, so a file the extractor newly claims is read again once. `ExtractorVersions.Current` is for output that changed. It is in every file's chunking fingerprint and settle key, so bumping it re-reads and re-embeds every file in every corpus. |
 | Content from somewhere that is neither a folder nor an upload: a mailbox, a database query | A source kind: an inventory and a read, handed to `IndexUnitsAsync` | The git-history source is the worked example ([D-34](decisions.md#d-34-a-commit-is-a-document)). Everything after "what are the units and how is one read" is shared. |
 | A derived view of what is indexed: per-file summaries | A chunk set holds one corpus more than one way, but every strategy today cuts the text rather than writing new text | A strategy that calls a model, which is the LLM-driven chunking [04](04-ingestion.md#meaning-not-just-budget) defers. Its seam is `ChunkOptions`. |
 | Content fetched over the network: an issue tracker, a wiki, a remote repository | Not offered | Rejected in [D-34](decisions.md#d-34-a-commit-is-a-document). Clone into the workspace mount and keep it current from the host ([04](04-ingestion.md#following-a-remote-without-dexicon-fetching)). |

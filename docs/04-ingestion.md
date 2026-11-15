@@ -341,7 +341,9 @@ on; a link or a file that cannot be opened is not read. What the walk cannot use
   other sources are still indexed, the job finishes `degraded`, the corpus reads `unavailable`, and the job's error (shown
   by `index_status` as `error:`) reads, for example,
   `Source 'docs' was not indexed because sub/.dexiconignore line 3 ('[z-a]') cannot be compiled (reversed character range).`
-  or `... because .dexiconignore is a link, and links are not followed.` A sweep leaves that source's inventory as it is.
+  or `... because .dexiconignore is a link, and links are not followed.` A source at the workspace root, whose path is empty,
+  reads `Source '(workspace root)' ...`, as it does in `Workspace path '(workspace root)' is not available under ...` and
+  `Source '(workspace root)' is not a git repository ...`. A sweep leaves that source's inventory as it is.
   Fixing or removing the cause clears it on the next pass. A hard link to a file elsewhere is read as the file it is,
   and its text can appear in the message.
 - An entry of a stored include or exclude list that cannot be used fails the walk the same way and is named by its
@@ -719,7 +721,7 @@ What a document holds is per source:
 | `includeMessage` | true | Subject and body |
 | `includeStat` | true | Files touched, with ± counts |
 | `includeDiff` | false | The patch |
-| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document says how large it was |
+| `maxDiffBytes` | 65536 | UTF-8 bytes of the patch, per commit. Over it the patch is dropped, the stat is kept, and the document names the limit (`[diff not included: over the 65,536 byte limit for this source]`) |
 | `includeMerges` | false | A merge's default patch is empty and its message is usually generated |
 | `maxCommits` | — | Bound the walk to this many commits from the tip |
 | `keepIndexed` | false | With `maxCommits`: keep a commit once indexed, rather than letting each new commit push the oldest out (below) |
@@ -968,7 +970,8 @@ hand and re-indexing every commit the day they differ. What that costs is weighe
 what a library would remove, in
 [D-34](decisions.md#d-34-a-commit-is-a-document). The inventory is one call; reading is one call per 100
 commits for the messages and another for the stat and patch when either is wanted, so a
-first pass over 201 commits with diffs is seven, and a refresh with nothing new is one.
+first pass over 201 commits with diffs is seven, and a refresh with nothing new is one. With `includeStashes`, each pass
+adds a `git for-each-ref` call, and the calls that list and read stashes when the repository has any.
 Refs and pathspecs are caller-supplied, so arguments are passed as a list and never a
 command line, with `--end-of-options` before the ref and `--` before the pathspecs, and
 the ref is checked against a small accepted set before any of that.
@@ -1078,7 +1081,8 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 | JSON/YAML/TOML | `.json`, `.yaml`, `.yml`, `.toml` | — | — | line | Treated as text; structure-aware chunking is not attempted |
 | Claude Code transcript | `.jsonl`, when the first records have the transcript shape | `System.Text.Json` | MIT | none | The conversation: each user and assistant message under a time and speaker line, and one line per tool call. Tool results, thinking and bookkeeping records are left out. Any other `.jsonl` file is text |
 
-Every loader returns `(text, metadata, unitMarkers)`. Failures are per-file and recorded:
+Every extractor returns an `ExtractedText`: the text, its unit markers (a page, slide or chapter number with the character
+offset it starts at), and optionally a title and named sections. Failures are per-file and recorded:
 
 - **PDF with no text layer** → `status: empty`, `status_detail: "no text layer: this is a
   scanned PDF, and OCR is not supported"`, and the file is visible in the UI as
@@ -1135,8 +1139,9 @@ read it as a defect in PDF extraction.
 A `.jsonl` file that is a Claude Code transcript is read as the conversation it records
 ([D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation)). Claude Code writes one file
 for each session at `~/.claude/projects/<project>/<session>.jsonl` and one for each subagent at
-`<session>/subagents/agent-<id>.jsonl`; a workspace source whose root holds that folder indexes them. What the
-mount exposes, and who can read it afterwards, is covered in [09](09-deployment.md#indexing-claude-code-transcripts)
+`<session>/subagents/agent-<id>.jsonl`; a workspace source whose root holds that folder indexes them. Only a workspace
+source reads a transcript this way: an uploaded `.jsonl` is stored as text, because an upload is matched to an extractor by
+extension alone (`ExtractorRegistry.For(string)`). What the mount exposes, and who can read it afterwards, is covered in [09](09-deployment.md#indexing-claude-code-transcripts)
 and [10](10-security-secrets.md#what-a-transcript-corpus-holds).
 
 **Why it is an extractor.** Measured on one installation on 2026-11-12: 1,066 transcripts, 4.95 GB, of which 99 are
@@ -1354,14 +1359,15 @@ Two strategies, selected by content kind, both producing chunks with provenance.
 ### Code and plain text — line-accumulating, language-aware
 
 Accumulates whole lines up to `chunk_size` tokens with `chunk_overlap` carried into the
-next chunk, so every chunk has an exact `start_line`/`end_line`. Never splits a line.
+next chunk, so every chunk has an exact `start_line`/`end_line`. A line is split only when it is longer than the whole
+budget ([below](#no-chunk-exceeds-the-budget)).
 
 With `boundary_mode: language-aware`, the file is first split at member boundaries by
 language, then each segment is size-chunked. This keeps a method with its signature instead
 of slicing it at an arbitrary token count. The patterns are in `LanguageMap.Boundaries`. For the languages with a member pattern a
 boundary is the member's signature line, so the comment and attribute lines above it belong to the segment before it. On the C# of
 this repository, one chunk holds a documented member's `///` block and its signature for 46.8% of such members at 256 tokens, 74.4% at
-512 and 91.7% at 1,024 (2,065, the size of the example set below, was not measured); attaching those lines to the member did not
+512 and 91.7% at 1,024; attaching those lines to the member did not
 change retrieval consistently and is not done
 ([benchmarks](benchmarks.md#function-level-retrieval-and-where-the-chunker-breaks-a-member-2026-11-11)).
 These languages have a member pattern: C#, F#, VB, Java, Kotlin, Scala, Swift, TypeScript,
@@ -1530,8 +1536,8 @@ a strategy, and a corpus can carry several over exactly the same documents.
 
 ```
 corpus "library"          content, sources, who can read it
-  ├── set "default"       embeddinggemma, 2065/258, language-aware   ← search lands here
-  └── set "fine"          embeddinggemma, 512/64, heading context
+  ├── set "default"       embeddinggemma, 256/32, language-aware     ← search lands here
+  └── set "fine"          embeddinggemma, 128/16, heading context
 ```
 
 Sets are addressed as `corpus:set`. An unqualified name means the default set, which is
@@ -1596,8 +1602,8 @@ The collection name also carries the provider, as in
 `dexicon__ollama__nomic-embed-text__768`, because two providers can serve a model of the
 same name and those are not the same vectors.
 
-A chunk set stores no framing, so the template comes from the model's profile each time a file is embedded
-and each time a query is sent. Each set therefore records the document template it was embedded with, at its first
+A chunk set has no framing setting: the template comes from the model's profile each time a file is embedded
+and each time a query is sent. Each set does record the document template it was embedded with, at its first
 check and when a full pass or a rebuild replaces every vector (under the condition that records the model, below),
 and a set whose record differs from the template the profile gives now is listed in the health report and the
 health panel ([D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)). Saving a new or changed profile queues a rebuild, which records the new template
@@ -1618,11 +1624,13 @@ rather than discovered.
 
 ### Knowing a model's limits, without indexing anything
 
-`POST /api/embedding-models/probe` measures what a model accepts:
+`POST /api/embedding-models/probe` measures what a model accepts (abridged: the response also carries `provider`, `model`,
+`tookMs` and a `summary`):
 
 ```json
 { "dimensions": 768, "maxInputChars": 11776, "truncatesSilently": true,
-  "charsPerToken": 2.82, "recommendedChunkTokens": 2783, "embedCalls": 27 }
+  "recommendedChunkChars": 7850, "recommendedChunkTokens": 1843, "contextTokens": 2048,
+  "charsPerToken": 2.82, "embedCalls": 27 }
 ```
 
 The probe needs the `admin` scope: it makes two dozen calls to the provider, which for a hosted one
@@ -1779,7 +1787,8 @@ the conversion removes a whole dependency. Chunk size is a target, not a contrac
 
 A lightweight per-language regex pass pulls declared names (types, functions, methods) in
 the chunk into `symbols[]`, indexed as a keyword. This makes `symbol:TokenService` filtering
-cheap. It is **not** a parser: it will miss declarations, and these documents state that
+cheap. Patterns exist for C#, TypeScript, JavaScript, Python, Go, Rust and Java (`LanguageMap.Symbols`); a chunk of any other
+language has no symbols. It is **not** a parser: it will miss declarations, and these documents state that
 rather than implying call-graph fidelity.
 
 ## Embedding
@@ -1787,11 +1796,12 @@ rather than implying call-graph fidelity.
 - Provider: Ollama by default, OpenAI and Azure OpenAI where configured, over
   `Microsoft.Extensions.AI` abstractions (`IEmbeddingGenerator`, built per provider by
   `EmbeddingGeneratorFactory`), so another provider is a registration, not a rewrite.
-- Batched: `DEXICON__EMBEDDING__BATCHSIZE` chunks per request (default 32), with at most
+- Batched: `DEXICON__EMBEDDING__BATCHSIZE` chunks per request (default 32; `docker-compose.yml` does not forward it, so
+  it is set in `docker-compose.override.yml` as for a provider), with at most
   `DEXICON__EMBEDDING__MAXCONCURRENCY` requests in flight per provider across all jobs
   (default 4).
-- An Ollama request times out after 2 minutes. A request that fails, whichever the
-  provider, is retried twice, waiting about 500 ms and then 1 s, each with up to 250 ms of
+- An Ollama request times out after 2 minutes (`DEXICON__OLLAMA__TIMEOUT`). A request that fails, whichever the
+  provider, is retried twice (`DEXICON__OLLAMA__MAXRETRIES`), waiting about 500 ms and then 1 s, each with up to 250 ms of
   jitter.
 - A chunk that still fails after the retries fails its **file**, not the scan: the file is
   recorded `failed` with the reason, the pass continues with the next file, and the job
@@ -1912,8 +1922,8 @@ pass finds them.
 
 Scheduling: on demand (UI button, `index_refresh` MCP tool), plus one optional interval for
 every corpus, `DEXICON__INDEXING__REFRESHMINUTES` (`DEXICON_INDEXING_REFRESHMINUTES` in
-`.env`), default 0 (off). At each tick `ScheduledRefreshService` queues a refresh for every
-corpus that has no job in flight. There is no filesystem watcher: polling is more reliable
+`.env`), default 0 (off). The first tick is one interval after the service starts. At each tick `ScheduledRefreshService`
+queues a refresh for every corpus that has no job in flight. There is no filesystem watcher: polling is more reliable
 over bind mounts, particularly on Windows hosts and WSL2.
 
 ## Job semantics
@@ -1929,7 +1939,9 @@ it. A running job is never joined, because it has already taken its list of sour
 
 Job kinds: `full` (every file, ignoring fingerprints and settle keys), `refresh`
 (incremental, the default) and `rebuild` (a full pass for one chunk set, used to backfill a
-new set while the live set keeps serving). Deletes are synchronous and are not jobs.
+new set while the live set keeps serving). Deletes are synchronous and are not jobs. A job is `queued`, then `running`, and
+ends `succeeded`, `degraded` (a file failed to embed, or a source could not be read), `failed` or `cancelled`. Extraction
+is also bounded across all jobs, by `MaxConcurrentExtractions` (default 4).
 
 Progress is reported after each embedding batch and, between files, once a second (a
 workspace pass also reports every 25 files). It is streamed on `GET /api/events` (SSE),

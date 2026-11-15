@@ -9,7 +9,7 @@
 | | |
 |---|---|
 | Transport | **Streamable HTTP** at `POST /mcp`. Legacy HTTP+SSE is deprecated in the spec and not implemented. GET, HEAD, PUT and DELETE answer 405 with `Allow: POST`: the transport is stateless, so there is no stream to open and no session to end. |
-| Handshake revisions | `2024-11-05`, `2025-03-26`, `2025-06-18`, **`2025-11-25`** — what SDK 2.2.0 will negotiate through `initialize`. |
+| Handshake revisions | `2024-11-05`, `2025-03-26`, `2025-06-18`, **`2025-11-25`** — what SDK 2.2.0 negotiated through `initialize` when measured (not measured again on 2.4.0). |
 | Handshake-free | **`2026-07-28`** clients send no `initialize` at all. Measured: `tools/list` and `tools/call` both succeed cold, with no prior handshake. |
 | Session mode | **Stateless.** Measured: no `Mcp-Session-Id` response header is ever emitted. |
 | SDK | `ModelContextProtocol.AspNetCore` **2.4.0**. The option is `WithHttpTransport(o => o.Stateless = true)`. |
@@ -92,7 +92,7 @@ tool advertises.
 | `corpus` | array of string | everything the key can reach | Corpus names to search. With several corpora, name the one or two whose list_corpora descriptions fit the question: searching all of them lets hits from the others crowd out the answer. Omit to search everything visible to you. |
 | `mode` | string | `hybrid` | hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable. |
 | `limit` | integer | 10 | Maximum results, 1-50. |
-| `pathPrefix` | string | none | Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead. |
+| `pathPrefix` | string | none | Restrict to files under this path, e.g. src/Auth/. Relative to the source root, not the corpus. Use `source` to narrow by folder instead. Matches whole words of the path, not a prefix ([05](05-search.md#shape-of-a-query)). |
 | `source` | string | none | Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more. |
 | `language` | string | none | Restrict to one language, e.g. csharp, python, typescript. |
 | `symbol` | string | none | Restrict to chunks declaring this symbol, e.g. TokenService. |
@@ -135,7 +135,7 @@ Returns one text block, formatted for a model to read. The structured result des
 ```
 3 results for "how do we refresh auth tokens" (hybrid, corpus: api-repo)
 
-1. src/Auth/TokenService.cs:120-168  · TokenService.RefreshAsync
+1. src/Auth/TokenService.cs:120-168
    public async Task<TokenPair> RefreshAsync(...)
    ...
 
