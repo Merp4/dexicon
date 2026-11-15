@@ -321,7 +321,8 @@ public sealed class SearchService(
     /// query alone would serve the first model's vector to the second collection: a
     /// comparison between two unrelated vector spaces, whose results are meaningless.
     ///
-    /// Keyed by the model's query template too. The embedder wraps the query in that template
+    /// Keyed by the model's query template too, with its length in front so that no template
+    /// and query pair can spell another's key. The embedder wraps the query in that template
     /// before it embeds, and saving a profile changes the template at once (the save removes
     /// the profile's own cache entry) while a vector cached under the old template would be
     /// served for the rest of <see cref="QueryEmbeddingTtl"/>. The template is read here and
@@ -331,7 +332,7 @@ public sealed class SearchService(
     private async Task<float[]> EmbedQueryAsync(string query, EmbeddingTarget target, CancellationToken ct)
     {
         var templates = await profiles.ForAsync(target, ct);
-        var key = $"qemb::{target}::{templates.Query}::{query}";
+        var key = $"qemb::{target}::{templates.Query.Length}:{templates.Query}::{query}";
         if (cache.TryGetValue(key, out float[]? cached) && cached is not null) return cached;
 
         var vector = (await embedder.EmbedAsync(target, EmbedPurpose.Query, [query], ct: ct))[0];

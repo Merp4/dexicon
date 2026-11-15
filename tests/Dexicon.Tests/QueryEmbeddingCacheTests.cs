@@ -2,6 +2,7 @@ using Dexicon.Core.Auth;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Embedding;
 using Dexicon.Core.Search;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -107,6 +108,72 @@ public sealed class QueryEmbeddingCacheTests : IAsyncLifetime
         _harness.Profiles.Templates = raw;
         await SearchAsync("token refresh");
         _embedder.QueryEmbeds.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ATemplateAndAQueryThatSpellTheSameTextTogetherDoNotShareAVector()
+    {
+        _harness.Profiles.Templates = new ModelTemplates("{text}", "a::{text}", TemplateOrigin.Configured);
+        await SearchAsync("b");
+
+        // The template `a` with the query `{text}::b` joins to the same characters as `a::{text}` with `b`
+        // when the key is a plain join; with the template's length in front they are two keys.
+        _harness.Profiles.Templates = new ModelTemplates("{text}", "a", TemplateOrigin.Configured);
+        await SearchAsync("{text}::b");
+
+        _embedder.QueryEmbeds.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ASavedProfileRowReachesTheKeyThroughTheRealProfileLookup()
+    {
+        EmbeddingTarget target;
+        await using (var db = _harness.NewContext())
+        {
+            var set = await db.ChunkSets.AsNoTracking().FirstAsync(TestContext.Current.CancellationToken);
+            target = new EmbeddingTarget(set.EmbeddingProvider, set.EmbeddingModel);
+        }
+
+        // What the profile save does: write the row, then remove the profile's cache entry. The search
+        // service shares the cache with the lookup, as the host's one memory cache does.
+        async Task SaveAsync(string queryTemplate)
+        {
+            await using var db = _harness.NewContext();
+            var row = await db.ModelProfiles.FirstOrDefaultAsync(
+                p => p.Provider == target.Provider && p.Model == target.CanonicalModel, TestContext.Current.CancellationToken);
+            if (row is null)
+                db.ModelProfiles.Add(new EmbeddingModelProfile
+                {
+                    Provider = target.Provider,
+                    Model = target.CanonicalModel,
+                    DocumentTemplate = "{text}",
+                    QueryTemplate = queryTemplate,
+                });
+            else
+                row.QueryTemplate = queryTemplate;
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            _cache.Remove(ModelProfiles.CacheKey(target));
+        }
+
+        async Task SearchWithRealProfilesAsync()
+        {
+            await using var db = _harness.NewContext();
+            var search = new SearchService(new ScopeResolver(db), _harness.Vectors, _embedder, new ModelProfiles(db, _cache),
+                _cache, NullLogger<SearchService>.Instance);
+            await search.SearchAsync(Reader, new SearchRequest { Query = "token refresh" }, TestContext.Current.CancellationToken);
+        }
+
+        await SearchWithRealProfilesAsync();
+        await SearchWithRealProfilesAsync();
+        _embedder.QueryEmbeds.ShouldBe(1);
+
+        await SaveAsync("task: search result | query: {text}");
+        await SearchWithRealProfilesAsync();
+        _embedder.QueryEmbeds.ShouldBe(2);
+
+        await SaveAsync("query: {text}");
+        await SearchWithRealProfilesAsync();
+        _embedder.QueryEmbeds.ShouldBe(3);
     }
 
     /// <summary>Counts the embed calls made for a query and passes every call on.</summary>
