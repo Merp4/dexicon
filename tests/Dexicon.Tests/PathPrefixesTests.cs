@@ -35,6 +35,30 @@ public sealed class PathPrefixesTests
         PathPrefixes.Of("/src//Auth/a.cs").ShouldBe(["src", "src/auth", "src/auth/a.cs"]);
     }
 
+    [Theory]
+    [InlineData("docs\\guide.pdf", "docs", "docs/guide.pdf")]
+    [InlineData("./x.pdf", "x.pdf")]
+    [InlineData("a/./b.txt", "a", "a/b.txt")]
+    [InlineData("report.pdf ", "report.pdf")]
+    [InlineData("dir / file.txt", "dir", "dir/file.txt")]
+    public void AStoredPathIsReadWithTheSameRulesAsAnArgument(string stored, params string[] expected)
+    {
+        PathPrefixes.Of(stored).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("docs\\guide.pdf")]
+    [InlineData("./x.pdf")]
+    [InlineData("a/./b.txt")]
+    [InlineData("report.pdf ")]
+    [InlineData("dir / file.txt")]
+    [InlineData("/src//Auth/a.cs")]
+    [InlineData("Doku/ÄÖÜ.txt")]
+    public void TheArgumentThatNamesAStoredFileIsOneOfItsPrefixes(string stored)
+    {
+        PathPrefixes.Of(stored).ShouldContain(PathPrefixes.Normalise(stored)!);
+    }
+
     [Fact]
     public void ANonAsciiNameIsFoldedWithTheInvariantCulture()
     {

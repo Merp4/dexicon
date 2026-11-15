@@ -77,8 +77,8 @@ Narrow with `pathPrefix`, `source`, `language` or `symbol` before raising `limit
 results across the whole index is usually worse than eight from `src/Auth/`. `pathPrefix` is
 relative to a source's root, so it cannot select a folder that is itself a source's root;
 `source` does that. `pathPrefix` takes a folder or a file, matched at whole path segments
-and ignoring case, so `src/Auth` finds `src/Auth/a.cs` and not `lib/src/Auth/b.cs` or
-`src/Authorization/c.cs`. A result names its source's root (`· in books/manuals/Architecture` after
+and ignoring case, from the source's root: `src/Auth` finds `src/Auth/a.cs` and not
+`lib/src/Auth/b.cs` or `src/Authorization/c.cs`, and a bare `Auth` finds only a root-level `Auth`. A result names its source's root (`· in books/manuals/Architecture` after
 the path) when the results span several sources, and a source that matches nothing is
 refused with an error that lists them, up to 1,500 characters and then how many more.
 A `source` that names a parent folder covers every source beneath it:

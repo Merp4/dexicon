@@ -8,8 +8,10 @@ namespace Dexicon.Infrastructure;
 /// so that a <c>pathPrefix</c> filter means the same for every chunk. Until a chunk has it, the filter matches that
 /// chunk by the words of the value, as it always did, and nothing is lost in the meantime.
 ///
-/// Qdrant is often not up yet when the host starts, so a failed attempt waits a minute and tries again, quietly,
-/// and only the last one is a warning. A start with nothing to do costs one empty scroll per collection.
+/// Qdrant is often not up yet when the host starts, so a failed attempt waits a minute and tries again. This service
+/// logs the retries at debug level and the last failure as a warning; when Qdrant is up and refuses to create the
+/// index, the store also logs a warning on every attempt. A start with nothing to do costs one index request and one
+/// empty scroll per collection.
 /// </summary>
 internal sealed class PathPrefixBackfillService(IVectorStore vectors, ILogger<PathPrefixBackfillService> log) : BackgroundService
 {

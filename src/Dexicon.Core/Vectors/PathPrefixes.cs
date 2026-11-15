@@ -16,10 +16,21 @@ internal static class PathPrefixes
     /// <summary>The payload field, a keyword index on an array of strings.</summary>
     public const string Field = "path_prefixes";
 
+    /// <summary>
+    /// The segments of a path as both sides compare them: backslashes as slashes, each segment trimmed, no empty or
+    /// <c>.</c> segment. <see cref="Of"/> and <see cref="Normalise"/> both read a path through this, so a stored path
+    /// and an argument that name the same file give the same prefixes.
+    /// </summary>
+    private static string[] Segments(string path) =>
+        path.Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s != ".")
+            .ToArray();
+
     /// <summary>The folders above a path and the path itself, lower-cased, slash-separated; empty for a blank path.</summary>
     public static string[] Of(string filePath)
     {
-        var segments = filePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var segments = Segments(filePath);
         var prefixes = new string[segments.Length];
         var path = "";
         for (var i = 0; i < segments.Length; i++)
@@ -39,11 +50,7 @@ internal static class PathPrefixes
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
 
-        var segments = value.Replace('\\', '/')
-            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(s => s != ".")
-            .ToArray();
-
+        var segments = Segments(value);
         return segments.Length == 0 ? null : string.Join('/', segments).ToLowerInvariant();
     }
 }

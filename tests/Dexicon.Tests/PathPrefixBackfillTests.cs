@@ -27,6 +27,8 @@ public sealed class PathPrefixBackfillTests
 
         public Func<CreateFieldIndexCollection, Exception?> FailIndex { get; set; } = _ => null;
 
+        public Func<UpdateBatchPoints, Exception?> FailUpdate { get; set; } = _ => null;
+
         public IEnumerable<T> Of<T>() where T : IMessage => Requests.OfType<T>();
 
         public override AsyncUnaryCall<TResponse> AsyncUnaryCall<TRequest, TResponse>(
@@ -34,7 +36,13 @@ public sealed class PathPrefixBackfillTests
         {
             Requests.Add((IMessage)request);
 
-            if (request is CreateFieldIndexCollection index && FailIndex(index) is { } failure)
+            var failure = request switch
+            {
+                CreateFieldIndexCollection index => FailIndex(index),
+                UpdateBatchPoints update => FailUpdate(update),
+                _ => null,
+            };
+            if (failure is not null)
             {
                 return new AsyncUnaryCall<TResponse>(
                     Task.FromException<TResponse>(failure), Task.FromResult(new Metadata()),
@@ -191,6 +199,19 @@ public sealed class PathPrefixBackfillTests
         await Should.ThrowAsync<InvalidOperationException>(() => store.BackfillPathPrefixesAsync(TestContext.Current.CancellationToken));
 
         invoker.Of<ScrollPoints>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AWriteThatQdrantRefusesEndsTheBackfillWithTheErrorAndLeavesLaterPagesUnread()
+    {
+        var (store, invoker) = Store();
+        invoker.Respond = TwoPages(PagesOfThreeFiles());
+        invoker.FailUpdate = _ => new RpcException(new Status(StatusCode.NotFound, "No point with id found"));
+
+        var thrown = await Should.ThrowAsync<RpcException>(() => store.BackfillPathPrefixesAsync(TestContext.Current.CancellationToken));
+
+        thrown.StatusCode.ShouldBe(StatusCode.NotFound);
+        invoker.Of<ScrollPoints>().Count().ShouldBe(1, "a page that was not written is not skipped over");
     }
 
     [Fact]

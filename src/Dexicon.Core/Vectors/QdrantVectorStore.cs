@@ -71,7 +71,9 @@ public interface IVectorStore
     /// Give every chunk written before <c>path_prefixes</c> existed its value, in place: only that field is
     /// written, so no vector is read or embedded again. Safe to run again and with a pass indexing, because it
     /// selects the chunks that still have none and a chunk written now carries its own. Returns how many points
-    /// it updated; throws when a collection's index on the field cannot be created, so that a caller can try again.
+    /// it updated; throws when a collection's index on the field cannot be created or Qdrant refuses a write, so
+    /// that a caller can try again (a point that a pass deleted since the scroll answers NotFound for its whole
+    /// batch, and the next run no longer lists it).
     /// </summary>
     Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default);
     Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default);

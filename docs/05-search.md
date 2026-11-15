@@ -49,7 +49,8 @@ search(query, scope, mode, limit, filters)
   `pathPrefix` means files under a path: a folder or a file, matched at whole path segments and
   ignoring case, relative to the source's root. `src/Auth` matches `src/Auth/a.cs` and
   `src/Auth/deep/b.cs`, and does not match `lib/src/Auth/b.cs`, `src/Auth.Tests/t.cs` or
-  `src/Authorization/c.cs`; `src/Au` matches nothing. A backslash counts as a slash, and a value
+  `src/Authorization/c.cs`; `src/Au` matches nothing. A bare name matches only at the source
+  root: `Auth` finds a root-level `Auth` and not `lib/Auth`. A backslash counts as a slash, and a value
   that names no segment (`/`, `./`) adds no condition. Each chunk stores `path_prefixes`, the
   folders above its file and the file itself, lower-cased, and the filter is an equality match on
   that keyword-indexed field.
