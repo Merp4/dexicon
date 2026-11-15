@@ -85,6 +85,7 @@ public sealed class SearchService(
     ScopeResolver scopes,
     IVectorStore vectors,
     IEmbeddingService embedder,
+    IModelProfiles profiles,
     IMemoryCache cache,
     ILogger<SearchService> log)
 {
@@ -319,10 +320,19 @@ public sealed class SearchService(
     /// two chunk sets on different models needs a vector from each, and caching on the
     /// query alone would serve the first model's vector to the second collection: a
     /// comparison between two unrelated vector spaces, whose results are meaningless.
+    ///
+    /// Keyed by the model's query template too, with its length in front so that no template
+    /// and query pair can spell another's key. The embedder wraps the query in that template
+    /// before it embeds, and saving a profile changes the template at once (the save removes
+    /// the profile's own cache entry) while a vector cached under the old template would be
+    /// served for the rest of <see cref="QueryEmbeddingTtl"/>. The template is read here and
+    /// again by the embedder; a save between the two caches a vector under the previous
+    /// template's key, which only a second save back to that template within the TTL reaches.
     /// </summary>
     private async Task<float[]> EmbedQueryAsync(string query, EmbeddingTarget target, CancellationToken ct)
     {
-        var key = $"qemb::{target}::{query}";
+        var templates = await profiles.ForAsync(target, ct);
+        var key = $"qemb::{target}::{templates.Query.Length}:{templates.Query}::{query}";
         if (cache.TryGetValue(key, out float[]? cached) && cached is not null) return cached;
 
         var vector = (await embedder.EmbedAsync(target, EmbedPurpose.Query, [query], ct: ct))[0];

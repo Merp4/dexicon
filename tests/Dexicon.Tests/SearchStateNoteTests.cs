@@ -37,7 +37,7 @@ public sealed class SearchStateNoteTests : IAsyncLifetime
     private async Task<string?> NoteAsync()
     {
         await using var db = _harness.NewContext();
-        var search = new SearchService(new ScopeResolver(db), new NoHits(_harness.Vectors), _harness.Embedder,
+        var search = new SearchService(new ScopeResolver(db), new NoHits(_harness.Vectors), _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
         var principal = new Principal("k", "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
 

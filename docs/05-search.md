@@ -421,8 +421,9 @@ A cold Ollama, with the model not resident, adds seconds. The authenticated `/he
 reports whether the default embedding provider answers (it probes the model's dimensions
 when they are not yet known), and the UI shows it.
 
-Query embeddings are cached in memory keyed by provider, model and the query text as
-typed, with a 5-minute TTL. Agents repeat queries far more than people do.
+Query embeddings are cached in memory keyed by provider, model, the model's query template and
+the query text as typed, with a 5-minute TTL, so a saved change to the query template applies to
+the next search and not after the TTL. Agents repeat queries far more than people do.
 
 ## Quality, and how it was judged
 

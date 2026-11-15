@@ -41,7 +41,7 @@ public sealed class SectionFilterTests : IAsyncLifetime
     private static Principal Reader() => new("k", "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
 
     private SearchService SearchOver(Dexicon.Core.Catalog.CatalogDbContext db) =>
-        new(new ScopeResolver(db), _harness.Vectors, _harness.Embedder,
+        new(new ScopeResolver(db), _harness.Vectors, _harness.Embedder, _harness.Profiles,
             new MemoryCache(new MemoryCacheOptions()), NullLogger<SearchService>.Instance);
 
     [Fact]

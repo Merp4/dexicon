@@ -254,7 +254,7 @@ public sealed class MalformedRequestTests
     }
 
     private static SearchService SearchOn(IndexingHarness harness, CatalogDbContext db) =>
-        new(new ScopeResolver(db), harness.Vectors, harness.Embedder, new MemoryCache(new MemoryCacheOptions()),
+        new(new ScopeResolver(db), harness.Vectors, harness.Embedder, harness.Profiles, new MemoryCache(new MemoryCacheOptions()),
             NullLogger<SearchService>.Instance);
 
     [Fact]
