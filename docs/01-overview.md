@@ -15,15 +15,17 @@ done once, in one container.
 
 A single service that:
 
-1. **Indexes** recursive folder trees (source code, docs) and uploaded files (PDF, DOCX,
-   PPTX, EPUB, HTML, Markdown, text) into Qdrant, embedding through Ollama by default, or
-   through OpenAI or Azure OpenAI where configured.
+1. **Indexes** recursive folder trees (source code, docs), uploaded files (PDF, DOCX,
+   PPTX, EPUB, HTML, Markdown, text), a git repository's history and Claude Code session
+   transcripts into Qdrant, embedding through Ollama by default, or through OpenAI or Azure
+   OpenAI where configured.
 2. **Searches** them with hybrid dense + keyword retrieval, returning chunks with
    `file:line` provenance.
 3. **Serves** that search to agents over MCP (streamable HTTP) and to humans over a small
    web UI.
-4. **Scopes** every key to the corpora it is mapped to, so one deployment can serve several agents,
-   people, or agent identities without them seeing each other's content.
+4. **Scopes** every key to the corpora it reaches (every corpus, or the ones ticked for it), so
+   one deployment can serve several agents, people, or agent identities without them seeing
+   each other's content.
 
 ## Who it is for
 
@@ -40,6 +42,8 @@ A single service that:
 - Recursive workspace indexing from read-only bind mounts, with gitignore-aware filtering
   and content-hash incremental refresh.
 - File upload and ingestion for the document formats listed above.
+- Git history as documents (one per commit, and with `includeStashes` one per stash) and
+  Claude Code session transcripts read as their conversation ([04](04-ingestion.md)).
 - Hybrid semantic + keyword search, scoped to what the calling key can reach.
 - MCP server (streamable HTTP) exposing search and catalogue tools.
 - Web UI for corpora, API keys and what each reaches, indexing control, and a search playground.
@@ -53,6 +57,7 @@ A single service that:
 | Reranking models, query rewriting, HyDE | Adds a second model dependency and latency for gains the caller can get by asking better. Revisit only with measurements. |
 | OCR of scanned PDFs | Needs a vision model and a GPU budget. Text-layer PDFs only; say so plainly when a PDF yields nothing. |
 | Graph/AST-level code understanding | Chunk-level retrieval is the target. Symbol extraction is metadata, not a call graph. |
+| Fetching content over the network (an issue tracker, a wiki, a remote repository) | Rejected in [D-34](decisions.md#d-34-a-commit-is-a-document). Clone into the workspace mount and keep it current from the host ([04](04-ingestion.md#following-a-remote-without-dexicon-fetching)). |
 | Hosted embedding as the default | Local-first is the product. OpenAI and Azure OpenAI ship as opt-in providers ([04](04-ingestion.md#embedding-providers)); nothing leaves the machine unless a hosted provider is configured and used. |
 | SSO / OIDC / user accounts | An admin password and API keys are the auth model. See [07](07-auth.md). |
 | Horizontal scaling, HA, sharding | One container, one Qdrant. If you outgrow it, you outgrew Dexicon. |
@@ -61,8 +66,10 @@ A single service that:
 
 These are recorded here because they constrain later design choices.
 
-1. **A search that cannot name its scope is an error, not a broad search.** There is no
-   "search everything" path. See [05](05-search.md) and [07](07-auth.md).
+1. **A search whose scope resolves to no corpus is an error, not an empty or a broad
+   search.** A search that names no corpus runs over the corpora its key reaches, and every
+   query to the vector store carries a `corpus_id` filter. See [05](05-search.md) and
+   [07](07-auth.md).
 2. **The embedding model is part of the collection's identity.** Changing model or
    dimensions means a new collection and a rebuild, never a silent mismatch.
 3. **Degradation must be audible.** Every fallback (keyword-only because embeddings are
@@ -88,5 +95,5 @@ Dexicon v1 is done when, on a clean machine:
 
   The bar is the two properties — unattended at that scale, and incremental cost
   proportional to the change — rather than a particular file count.
-- A key cannot retrieve content from a corpus it is not mapped to, through any surface, proven by
+- A key cannot retrieve content from a corpus it does not reach, through any surface, proven by
   a test that asserts it.

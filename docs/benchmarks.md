@@ -11,10 +11,10 @@ Each is swept independently, so a default can be judged on both rather than on p
 alone.
 
 Three models × three chunk sizes × three boundary modes = 27 chunk sets, queried in three
-search modes = **81 configurations, 4,455 searches**. Every chunk set holds identical
-content with exactly one variable changed, in one instance at one time. That comparison is
-only possible because a corpus can carry several chunk sets; before that it needed two
-corpora and a promise that nothing else had drifted.
+search modes = **81 configurations per corpus**: 4,455 searches over documents (55 queries) and 4,212 over
+code (52 queries). Every chunk set holds identical content with exactly one variable changed, in one instance
+at one time. That comparison is only possible because a corpus can carry several chunk sets; before that it
+needed two corpora and a promise that nothing else had drifted.
 
 **What is measured:** the rank of the file that should answer each query. This measures
 retrieval position only, not relevance or passage quality. MRR is the mean of `1/rank`, so
@@ -119,7 +119,7 @@ does not compromise.
 **Keyword retrieval is considerably weaker on code than on prose**, 0.579 against 0.677. An
 identifier a developer half-remembers is rarely the identifier in the file, and the sparse
 encoder has no notion of `TokenService` being what you meant by "token hashing". Hybrid
-carries it: it beats keyword on every model, by 0.13 on the best of them.
+carries it: it beats keyword on every model, by 0.077 to 0.156 (0.129 on the mean over all three).
 
 **Every conclusion from the documents sweep survives.** Hybrid wins both. `embeddinggemma`
 wins both. `language-aware` loses both. The two corpora disagree about nothing that
@@ -358,10 +358,10 @@ the top three chunks carry 41,210 characters, 16 times the 2,599 at 1,200.
 
 **The size the Models screen suggests is outside what was measured.** The UI suggests for a new chunk set 90%
 of the model's measured context as its chunk size (`CodeChunker.UsableContext`), held to 64 to 8,192 tokens.
-Test limits suggested 1,805 tokens for `embeddinggemma` and 7,335 tokens (31,232 characters of prose) for
-`embeddinggemma-2:q8_0`. The largest arm here is 16,000 characters, about 4,200 tokens at 3.8 characters per
-token, so nothing in this round supports the size suggested for the alias, and on code the trend at larger
-sizes is flat to negative.
+Test limits suggested 1,805 tokens for `embeddinggemma` and 7,335 tokens for `embeddinggemma-2:q8_0` (its
+character budget is 31,232, two thirds of the 46,848 characters of prose measured). The largest arm here is
+16,000 characters, about 4,200 tokens at 3.8 characters per token, so nothing in this round supports the size
+suggested for the alias, and on code the trend at larger sizes is flat to negative.
 
 Speed, on the shared GPU: `embeddinggemma` ran at 12 to 15 chunks per second and `embeddinggemma-2` at 8 to
 9 up to 8,000 characters, and at 4.2 (docs) and 5.8 (code) at 16,000. `/api/ps` reported the alias at 1.40 GB
@@ -384,7 +384,7 @@ refuses to start an arm with less than 10 GB available in the VM and stops if th
 
 Every score above asks which file a question is about. It cannot say whether the chunk that comes back is the function the
 question is about, or whether that function arrives with its own description. This round measures both on the C# of `src/`
-(tree `f239ba4`, 143 text files, 139 of them C#, chunked by the production `CodeChunker` in `language-aware` mode at 256/32,
+(tree `f239ba4`, Ollama 0.40.15, 143 text files, 139 of them C#, chunked by the production `CodeChunker` in `language-aware` mode at 256/32,
 512/64 and 1,024/128 tokens and overlap). 2,065/258, the size the docs' example uses, was dropped: `embeddinggemma:latest` refused 7 of the 60
 longest such chunks of this code ("the input length exceeds the context length"). The predictions, committed before any scoring
 run, are in `scripts/bench/functionbench-predictions-2026-11-11.md`; the results are in
@@ -522,7 +522,7 @@ What the arms show:
   same 14 files, which at the 10.9 chunks per second of this run is 21 minutes of embedding against 16 seconds.
 - **Tool-call lines cost the conversation nothing measurable** (adding them: +0.023 [-0.041, +0.105] at 256 tokens,
   -0.003 [-0.121, +0.137] at 512) and are the only arm without tool results that answers a question about a command run
-  or a file read: 13 of 14 within ten, against 0 of 14 without them. They add 64% to 70% to the chunks.
+  or a file read: 13 of 14 within ten at 256 tokens (11 at 512), against 0 of 14 without them. They add 64% to 70% to the chunks.
 - **Tool results are not indexed, and that has a cost.** Keeping 200 characters of each adds 50% to the chunks
   (175 to 262; 90 to 134) and moves the conversation score by +0.051 [-0.025, +0.158] at 256 tokens and +0.030 [-0.071,
   +0.144] at 512. The four tool-result questions were chosen from those 200 characters, so the result shows what leaving

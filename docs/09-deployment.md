@@ -204,8 +204,9 @@ A startup probe also calls both endpoints and logs what answered:
 `Qdrant reachable at <endpoint>` and
 `Embedding provider '<name>' reachable, model <model> (<n>d)`, where the dimension count is
 what the model returned for a test input. A failure of either is logged as an error and
-startup continues: search falls back to keyword matching, and files fail to embed (after
-two retries) until the embedding endpoint recovers.
+startup continues. While Qdrant does not answer, search fails. While the embedding endpoint
+does not answer, search falls back to keyword matching and files fail to embed (after two
+retries) until it recovers.
 
 ### Reusing an Ollama you already run
 
@@ -351,7 +352,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_UPLOAD_MAXFILEBYTES` | `DEXICON__UPLOAD__MAXFILEBYTES` | `209715200` | 200 MB per file. One upload request may carry ten files at this size plus 1 MiB of framing ([04](04-ingestion.md#upload--files-pushed-through-the-ui-or-api)). |
 | `DEXICON_ADMIN_PASSWORD` | `DEXICON__ADMIN__PASSWORD` | _(generated)_ | The admin password. Blank generates one on the first start and prints it to the log once. Set, it is applied on every start, which is the way back in after a forgotten one. Nothing in the UI or API changes it. |
 | `DEXICON_BOOTSTRAP_TOKEN` | `DEXICON__BOOTSTRAP__TOKEN` | *(empty)* | Blank mints nothing; keys are created under Access. Set, it must read `dex_<id>_<secret>` and is adopted as a key holding `search` and `ingest`. A malformed value fails the start (`A bootstrap token must start with 'dex_'.`) and the container restarts in a loop. |
-| `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | |
+| `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | `Trace` (also spelled `Verbose`), `Debug`, `Information`, `Warning` or `Error`, case-sensitive. Any other value logs at `Information`. |
 | `DEXICON_TAG`, `DEXICON_OWNER` | | `latest`, `merp4` | Which Dexicon image: `ghcr.io/<owner>/dexicon:<tag>`. See "Image tags". |
 | `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.1`, `0.40.16` | Which Qdrant and Ollama images. |
 | `DEXICON_GPU_DEVICE_IDS` | | `0` | Which GPU the embedder uses, as `nvidia-smi -L` numbers them. Read only when `docker-compose.gpu.yml` is applied. |
@@ -373,7 +374,9 @@ wanted:
   timeout so neither gives up first.
 
 `DEXICON__STORAGE__DATAPATH` (`/data`) and `DEXICON__INDEXING__WORKSPACEROOT` (`/workspaces`)
-are set by the image to match the volumes and are not meant to change.
+are set by the image to match the volumes and are not meant to change. The catalogue is
+`catalog.db` under the data path (`DEXICON__STORAGE__CATALOGFILENAME`), and
+[backup](#backup-and-recovery) copies the whole volume.
 
 No secret has a default value except `QDRANT_API_KEY`, whose default exists so that a blank
 `.env` cannot turn Qdrant's authentication on with an unusable key. No secret is ever read
@@ -475,6 +478,9 @@ services:
 
 3. **Tag and push.** That publishes the image and creates the GitHub Release.
 
+`main` accepts changes through a pull request only, so steps 1 and 2 are one commit in one
+pull request, and the tag goes on the commit that merge creates on `main`.
+
 Between step 2 and step 3 the committed document names the new minor while an untagged
 build of the same commit produces the old one. CI compares the two with `info.version`
 set aside for exactly that reason, so the release commit passes its own checks; the
@@ -551,7 +557,7 @@ from such a catalogue works: a collection that does not exist has no vectors to 
 ### The warnings on first run
 
 A first start on a new catalogue applies every migration in turn, and EF Core's migration
-runner logs a warning for each of six operations (as of 0.6.7). The log quotes each value, so
+runner logs a warning for each of six operations (as of 0.7.1). The log quotes each value, so
 the text reads as follows, with the end of each line cut:
 
 ```
@@ -619,8 +625,9 @@ applies its own policy, and one that caches `/` without regard to these headers 
 until its entry expires.
 
 Qdrant and Ollama are upgraded on their own. A Dexicon release changes the defaults in
-`docker-compose.yml`; a deployment that pins `QDRANT_TAG` or `OLLAMA_TAG` in `.env` keeps what
-it pins until the pin is edited.
+`docker-compose.yml` and `.env.example`; a deployment that pins `QDRANT_TAG` or `OLLAMA_TAG` in
+`.env` keeps what it pins until the pin is edited. `.env.example` sets both, so an `.env` copied
+from it pins the tags the template named at the time.
 
 - **Qdrant:** move one minor version at a time (for example 1.16, 1.17, 1.18, 1.19, 1.20),
   each time to the latest patch of that minor. Archive the `qdrant_data` volume and the Dexicon

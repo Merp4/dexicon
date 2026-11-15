@@ -40,22 +40,22 @@ carrying a copy of it.
 
 | Key | Sets |
 |---|---|
-| `DEXICON_URL` | Where the server is. The REST base, not the `/mcp` endpoint |
+| `DEXICON_URL` | Where the server is. The REST base, not the `/mcp` endpoint. Defaults to `http://localhost:8477` |
 | `DEXICON_TOKEN` | A `search`-scoped key. Never the admin password |
 | `DEXICON_TIMEOUT` | Seconds, covering connect and read. Defaults to 10, above the measured cold-query cost |
-| `DEXICON_CONTEXT_MAX_CHARS` | `maxChars` |
+| `DEXICON_CONTEXT_MAX_CHARS` | `maxChars`. The hook sends 2,000 when this is unset (the server's default is 8,000) |
 | `DEXICON_CONTEXT_LIMIT` | `limit` |
 | `DEXICON_CONTEXT_MODE` | `mode` |
 | `DEXICON_CONTEXT_NEIGHBOURS` | `neighbours` |
 | `DEXICON_CONTEXT_CORPUS` | `corpus`, comma-separated |
-| `DEXICON_CONTEXT_MIN_PROMPT_CHARS` | Floor below which no search runs |
-| `DEXICON_CORPORA_DESCRIPTION_CHARS` | How much of each description `SessionStart` announces |
+| `DEXICON_CONTEXT_MIN_PROMPT_CHARS` | Floor below which no search runs. Defaults to 25 |
+| `DEXICON_CORPORA_DESCRIPTION_CHARS` | How much of each description `SessionStart` announces. Defaults to 180; 0 omits descriptions |
 
 `DEXICON_CONTEXT_CORPUS` narrows the per-prompt hook without narrowing the key, so the
 agent's own `search_index` calls still reach everything.
 
-Anything already in the environment wins over the file, so a single run can be pointed
-elsewhere without editing it.
+A `DEXICON_` variable already in the environment wins over the same key in the file, so a
+single run can be pointed elsewhere without editing it.
 
 ## The budget, and what a small one gives you
 
@@ -91,11 +91,12 @@ Failures are reported on stderr, never silently:
 | Situation | Result |
 |---|---|
 | No config file | Warning naming the path; no output |
-| No `DEXICON_TOKEN` | Warning; no output |
+| No `DEXICON_TOKEN` | `SessionStart` warns; `UserPromptSubmit` stays silent. No output from either |
 | Server unreachable, or times out | Warning with the reason; no output |
 | 401 or 403 | Warning saying which; no output |
-| Response is not JSON, or is an error object | Warning; no output |
-| Nothing matched | Silent. This is a real answer, not a fault |
+| Any other HTTP status, or a response that is not JSON | Warning naming the path and the status or the parse error; no output |
+| The budget is too small for any result | The server's note on stderr; no output |
+| Nothing matched, or no corpus is `ready` (`SessionStart`) | Silent. This is a real answer, not a fault |
 | Prompt shorter than the floor, or a slash command | Silent, before any request |
 
 The distinction in the last two rows is the point: a hook that stays quiet for a missing

@@ -38,16 +38,20 @@ can delete a corpus or mint a key ever sits in an agent's configuration file.
 - Stored as **PBKDF2-HMAC-SHA256, 600 000 iterations, 32-byte salt** and verified in
   constant time, in the catalogue; the environment is read at start-up, not per request.
 - Posted to `POST /api/session`, which returns a `dexs_…` bearer valid for 12 hours, held
-  in memory and nowhere else. A restart signs you out.
+  in memory and nowhere else. A restart signs you out, and `DELETE /api/session` ends the
+  session at once.
 
 It is the first credential here a human chooses, so it is the first that can be guessed.
-Failed attempts are throttled by a delay that doubles from the third attempt and caps at 30
-seconds, counted **globally**: there is one password, so there is one thing to guess, and in
-a single container every caller arrives from the same gateway address, which makes the
-source address useless as a discriminator. A delay and not a lockout, because with one
-shared credential a lockout is a denial of service that anyone able to reach the port could
-inflict on the owner. The counter resets on success and lives in memory, so a restart clears
-it; a restart needs host access, which already defeats this model.
+Failed attempts are throttled by a delay of 1 second before the third attempt, which doubles
+with each further failure and caps at 30 seconds, counted **globally**: there is one
+password, so there is one thing to guess, and in a single container every caller arrives
+from the same gateway address, which makes the source address useless as a discriminator.
+The delay is served before the password is checked, so a correct password sent during an
+attack waits too. A delay and not a lockout, because with one shared credential a lockout is
+a denial of service that anyone able to reach the port could inflict on the owner. The
+counter resets on success, is forgotten after 15 minutes without a failure, and lives in
+memory, so a restart clears it; a restart needs host access, which already defeats this
+model.
 
 ### API keys
 
@@ -82,7 +86,9 @@ belongs to the key.
   token service drops it from any key that reaches it another way.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
-  so a scope removed is refused from the agent's next call.
+  so a scope removed is refused from the agent's next call. A key holds at least one scope:
+  `PUT` with none answers 400 `No scope`, and a `POST /api/tokens` that names none issues
+  `search`.
 - Optional expiry, set with `expiresInDays` on `POST /api/tokens` (0 to 36,500, where 0 is none;
   anything else is `400`); the Access page does not offer it. Optional revocation, effective
   immediately: the principal cache holds
@@ -135,8 +141,9 @@ not shown `list_folders`, `configure_corpus` or `configure_source`, one without 
 is not shown `propose_removal` or `removal_status`, and one without `search`
 is not shown the four tools that read the index, rather than being refused when it calls
 one: an agent that can see a tool will call it, spend a turn on the error, and
-sometimes retry. `McpRequestFilters.ListToolsFilters` removes them from `tools/list`, which
-carries the bearer like every other request. Each tool checks its scope when called as well.
+sometimes retry. A list-tools filter registered in `Program.cs` removes them from
+`tools/list` (`ToolVisibility.HiddenFrom` decides which), and the request carries the bearer
+like every other. Each tool checks its scope when called as well.
 
 But the transport is stateless ([D-12](decisions.md#d-12-stateless-streamable-http-mcp-2026-07-28)),
 so there is no `notifications/tools/list_changed` to send, and a client lists on connect and
@@ -148,6 +155,18 @@ a corpus reaches it on the next call.** The UI says so next to the tick.
 The SPA holds the session bearer in `sessionStorage` and sends it as
 `Authorization: Bearer`. No cookies, therefore no CSRF surface, and the bearer dies with the
 tab rather than outliving the person using it.
+
+### Paths served without a credential
+
+The auth middleware runs before routing and lets these through without a bearer: `/`,
+`/index.html`, `/favicon.ico`, `/robots.txt`, everything under `/assets/`,
+`/healthz/live`, `/healthz/ready`, and `/api/session` (sign-in and sign-out). Matching is
+by exact path, or by the `/assets/` prefix, and ignores case. Every other path requires one,
+including `/healthz`, `/mcp` and `/openapi/integration.json`. A request without a
+credential to any other path, existing or not, is therefore a 401; with one, a path that does
+not exist is a 404 ([08](08-ui.md#shell)). The static file middleware runs ahead of the auth
+middleware and serves the web root, which the image fills with `index.html` and the files
+under `assets/`.
 
 ## Enforcement
 

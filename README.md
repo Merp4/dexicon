@@ -6,9 +6,10 @@
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![CI](https://github.com/Merp4/dexicon/actions/workflows/ci.yml/badge.svg)](https://github.com/Merp4/dexicon/actions/workflows/ci.yml)
 
-Dexicon indexes source trees, PDFs, EPUBs, Word and Markdown documents and answers
-questions about them over [MCP](https://modelcontextprotocol.io), so that Claude Code and
-other MCP clients can search local files.
+Dexicon indexes source trees, git history, PDFs, EPUBs, Word and Markdown documents and
+Claude Code session transcripts, and answers questions about them over
+[MCP](https://modelcontextprotocol.io), so that Claude Code and other MCP clients can search
+local files.
 
 ```
 search_index("how does promotion work")      → 04-ingestion.md:228-265, and nine more
@@ -83,17 +84,30 @@ including the per-prompt one that is installed but left switched off.
   and reports the degradation in the response.
 - **Document formats.** PDF, EPUB, DOCX, PPTX and HTML retain their natural unit, so
   results cite `#page=201` or `#chapter=8` rather than a line number in extracted text.
+- **Git history and transcripts.** A git-history source indexes each commit as a document cut
+  in `message`, `stat` and `diff` sections, and with `includeStashes` each stash and its
+  untracked files as well ([04](docs/04-ingestion.md#git-history--a-repositorys-commits)). A
+  Claude Code `.jsonl` transcript in a workspace source is indexed as its conversation
+  ([04](docs/04-ingestion.md#claude-code-session-transcripts)).
 - **Chunk sets.** A corpus may hold several chunkings, addressed as `corpus:set`. Changing
   the embedding model adds a set, backfills it, then promotes it, so search is never served
   from a partially built index.
-- **Incremental refresh.** Content-hashed. A change to a chunker or extractor increments a
-  version and reprocesses only the affected files.
+- **Incremental refresh.** Content-hashed: a file whose bytes, chunk set settings and model are
+  unchanged is not embedded again. The chunker and the extractors each carry a version in that
+  hash, so a change to either is picked up on the next pass
+  ([D-38](docs/decisions.md#d-38-a-file-the-last-pass-finished-with-is-not-read-again)).
+- **Search filters.** A search can narrow to a source, a path, a `language`, a `symbol`,
+  a history `section`, or an exact `phrase` (words in that order, ignoring case and
+  punctuation) ([05](docs/05-search.md)).
 - **An admin password, and keys scoped to corpora.** The password is the only route to
-  administration and is never held by an agent. Each API key reaches the corpora ticked for
-  it in the UI, re-read per request, so changing what an agent can see does not mean
+  administration and is never held by an agent. Each API key reaches every corpus or the
+  ones ticked for it in the UI, re-read per request, so changing what an agent can see does not mean
   restarting it. Enforced at three layers.
-- **State reporting.** A partially built index, a skipped file and an empty corpus are each
-  distinguishable from a search that returns no results.
+- **State reporting.** A partially built index, a skipped file, an empty corpus and a corpus
+  whose source could not be read are each distinguishable from a search that returns no
+  results. `/healthz` also lists chunk sets whose embedding model or document framing has
+  changed since they were built ([D-46](docs/decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence),
+  [D-47](docs/decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)).
 - **An HTTP API for scripts.** `POST /api/context` returns one assembled, cited passage
   within a character budget, for hooks and CI steps that have no agent loop to fetch
   results with. Described by its own OpenAPI document; see

@@ -120,7 +120,8 @@ as the rule it protects.
 |---|---|
 | No secret in tracked config | `NoSecretValuesInTrackedConfiguration` scans `appsettings*.json` (excluding `.local`) for keys matching `password|secret|apikey|api_key|token|credential` with a non-empty value. Fails the build. |
 | No secret committed, ever | `gitleaks` as a pre-commit hook **and** a CI job over full history, with a custom rule for the `dex_` prefix. |
-| `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, and `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option. A variable newly forwarded by `docker-compose.yml` without an entry in `.env.example` fails CI, and so does one that binds to no option. An option never wired into compose is invisible to both tests. |
+| `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option, and `EverySettingComposePassesIsInTheDeploymentGuide` asserts each one appears in [09](09-deployment.md#configuration). A variable newly forwarded by `docker-compose.yml` without an entry in `.env.example` or the guide fails CI, and so does one that binds to no option. An option never wired into compose is invisible to these three tests. |
+| Every option is read | `EveryOptionPropertyIsReadSomewhere` asserts every property of the options classes is read by code under `src`. |
 | No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line; `ExceptionLogForgingTests` asserts the same for an exception (message, inner exception, aggregate member, stack frame, `ToString`) and for a logged value, through the console sink; `McpEchoTests` and `EchoSiteTests` assert a tool error repeats a hostile value on one line and cut, at each site they can drive, and `EchoSiteTests` reads the source of the tools to hold the rest. No test scans log calls for credentials. |
 | No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
@@ -136,9 +137,9 @@ bad. A person types the password into the form every session; or whatever is dri
 browser reads it out of `.env` and types it, which puts a live credential into a
 transcript, a shell history and a log.
 
-`scripts/dev-token.py` is the third way. It reads `DEXICON_ADMIN_PASSWORD` from `.env`,
-exchanges it for a session at `/api/session` **inside the script**, and hands only that
-session to the page. The password never leaves the process, and what does reach the browser
+`scripts/dev-token.py` is the third way. It reads `DEXICON_ADMIN_PASSWORD` from the
+environment, or else from `.env`, exchanges it for a session at `/api/session` **inside the
+script**, and hands only that session to the page. The password never leaves the process, and what does reach the browser
 expires on its own and can be revoked. Nothing in between renders either value; the
 operator sees a nonce and a byte count.
 
@@ -196,6 +197,7 @@ Audited 2026-09-17 by provoking each failure against the running stack.
 | Malformed token | 401 `Invalid credentials` |
 | Well-formed unknown token | 401 `Invalid credentials` — **identical**, so nothing says whether a token exists, is revoked or has expired |
 | `POST /mcp` unauthenticated | 401 before any tool listing; the tool surface is not enumerable |
+| A path that does not exist, or a method an endpoint does not take, with a credential | 404 or 405 with that endpoint's `Allow` (`Allow: POST` for `/mcp`), never the web UI page. Without a credential, any path outside the anonymous list is 401 ([07](07-auth.md#paths-served-without-a-credential)). |
 
 Two properties this depends on, both of which should be re-checked:
 
@@ -252,7 +254,13 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
 ## Supply chain
 
 - Central package management (`Directory.Packages.props`); one version per dependency.
-- Dependabot for NuGet, npm, Docker base images, and GitHub Actions.
+- Dependabot for NuGet, npm, Docker base images, and GitHub Actions. It skips major versions
+  of the packages and images that move with the target framework (`Microsoft.Extensions.*`,
+  `Microsoft.EntityFrameworkCore*`, `Microsoft.AspNetCore.*`, `dotnet/sdk`, `dotnet/aspnet`)
+  and of `node`, minor and major versions of `Microsoft.CodeAnalysis.CSharp`, and TypeScript 7
+  and later, each with the reason in `.github/dependabot.yml`; those move by hand.
+- `global.json` holds the build to the newest installed 10.0 SDK, and the CI build job fails
+  when `dotnet --version` is not 10.
 - A Dependabot pull request with a patch or minor update, or a Docker digest refresh, gets
   GitHub auto-merge from `.github/workflows/dependabot-automerge.yml` and merges when the
   required checks pass. A major update, or a bump of an action that workflow uses, stays
@@ -324,9 +332,18 @@ include globs reach, and in every commit whose patch is within `maxDiffBytes` (6
 unless set). With the diff off, what remains is what `includeMessage` and
 `includeStat` keep, which by default is every commit message and every changed path.
 `.gitignore` only ever kept out what it listed at the time, and a history source takes no
-exclude globs, so its include globs are the only narrowing ([04](04-ingestion.md#git-history--a-repositorys-commits)). Scan a
+exclude globs for its commits, so its include globs are the only narrowing ([04](04-ingestion.md#git-history--a-repositorys-commits)). Scan a
 repository's full history before indexing it with the diff on; this repository's CI runs
 gitleaks over its own for the same reason.
+
+With `includeStashes` on (off by default), the source also indexes each stash and each
+distinct version of an untracked file a stash holds (`git stash -u`), which no commit
+contains: an untracked credential file that git's ignore rules did not cover when it was
+stashed becomes searchable. An untracked file is left out when git's ignore rules, read from
+disk when the pass runs, cover its path (`git stash --all` records ignored files such as
+`.env`), when the exclude globs the source follows cover it, and when it is empty, over the
+size cap or binary. At most 500 untracked paths per stash and 10,000 file documents per source are read.
+Removing the source removes its stash documents and their vectors.
 
 ## What a transcript corpus holds
 

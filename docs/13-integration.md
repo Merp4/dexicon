@@ -36,7 +36,7 @@ revision you have checked out. No other document name is served: `/openapi/v1.js
 404, because the full surface is the UI's contract rather than yours.
 
 The `info.version` there is the version of the **running build**. A release image carries
-its tag, so a 0.6.x instance reports `0.6`. An `edge` or a hand-built image reports `0.0`,
+its tag, so a 0.7.x instance reports `0.7`. An `edge` or a hand-built image reports `0.0`,
 which is the Dockerfile saying the build is not a release rather than a version to compare
 against.
 
@@ -139,6 +139,10 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 | `pathPrefix`, `source`, `language`, `symbol`, `section` | — | The search filters, unchanged. |
 | `phrase` | — | Keep hits that contain these words in this order, ignoring case and punctuation. With a blank `query` the phrase is the query. Costs query time on a large scope: [05](05-search.md#exact-phrases). |
 | `distinctTitles` | true | Collapse one document held in two formats. |
+
+`POST /api/search` takes the same fields except `maxChars`, `neighbours` and `lineNumbers`,
+and adds `maxCharsPerHit` (default 1,500, clamped to 0-100,000; 0 returns whole chunks). Its
+response is described in [05](05-search.md#result-contract).
 
 **Budgets are characters, not tokens.** No tokenizer ships with Dexicon, and the model
 reading the passage is not the model that embedded it, so a token figure here would be an

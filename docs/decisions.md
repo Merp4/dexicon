@@ -1281,12 +1281,12 @@ start.
 
 **Revisit if.** The `UserPromptSubmit` hook proves useful enough to default on, which needs
 a relevance floor Dexicon does not currently expose: `POST /api/context` reports `usedChars`,
-`truncated` and `droppedHits`, but no score, so a hook cannot yet tell a good passage from
-the best of a bad set. A fused DBSF score is comparable within one search and not across
-searches ([D-06](#d-06-score-fusion-server-side)), so the figure would have to be chosen and
-measured the way the chunk ratio was in
-[D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured). A `minScore` parameter,
-or returning the fused score, is the smaller change that would make the default defensible.
+`truncated` and `droppedHits`, and a fused `score` on each citation, but no threshold, so a
+hook cannot yet tell a good passage from the best of a bad set. A fused DBSF score is
+comparable within one search and not across searches ([D-06](#d-06-score-fusion-server-side)),
+so the figure would have to be chosen and measured the way the chunk ratio was in
+[D-27](#d-27-a-chunk-budget-is-characters-and-the-ratio-is-measured). A `minScore` parameter
+is the smaller change that would make the default defensible (as of 0.7.1 the endpoint has none).
 
 ---
 
@@ -1322,7 +1322,7 @@ token boundaries are not observable. A local tokenizer would be exact only if it
 model actually loaded, which cannot be shown: a re-pull at a different quantisation or a
 provider-side template breaks it silently, and that is worse than a ratio, because a ratio
 announces itself as an approximation. It also couples the index to a tokenizer, which is the
-downside AI Engineering names for token-based chunking: change the tokenizer and reindex.
+downside a book in the indexed library names for token-based chunking: change the tokenizer and reindex.
 
 **The refusal is the measurement, and it is nearly free.** `EmbeddingService` already sets
 `truncate: false` so the provider refuses rather than silently shortening. Measured against
@@ -1448,7 +1448,8 @@ could not be tried at all — the only copy of a workspace file's extracted text
 chunk payloads, so there was no document to read a window from. `file_texts` gives one,
 and `get_context` reads it, taking the caller's line range out of the document rather than
 the chunks overlapping it. `POST /api/context`, which the benchmark's passage arm calls,
-still expands by chunk neighbours.
+still expanded by chunk neighbours when this was measured; since 2026-09-21 it takes the text from the
+document where one exists, and the span from the chunk neighbours.
 
 **Overlap earns nothing at 256 tokens.** Swept alongside, passage arm with no
 neighbours: 256 with no overlap beats 256 with the shipped 100 at both budgets, 0.491
@@ -1468,8 +1469,8 @@ And the ground truth is authored, which is its weakest point: 15 of the 55 spans
 unique and still identified the wrong fact until review and a full re-read caught them.
 
 **Revisit if.** Reading the passage out of the document, rather than out of the chunks
-either side of the hit, still awaits its experiment: it needs `/api/context` to assemble
-that way and a benchmark arm that scores it. The neighbour result above suggests where to
+either side of the hit, still awaits its experiment: `/api/context` has assembled that way since
+2026-09-21, and no scored result of it is recorded. The neighbour result above suggests where to
 look, since two chunks either side already pays at a wide budget. A larger or more varied
 corpus could also move the size result, which rests on 55 questions over 16 documents.
 
@@ -1635,6 +1636,7 @@ or two.
 **Revisit if.** The sweep grows expensive enough to need its own progress and
 cancellation. A tree of a million files is a different problem from 1,804, and at that
 size discovery stops being the cheap half.
+
 ---
 
 ### D-33 One queue, one pool, a concurrency per work type
@@ -1696,6 +1698,7 @@ retry would survive it.
 
 **Revisit if.** A type needs to preempt rather than queue, or the number of types stops
 being small enough to configure by hand.
+
 ---
 
 ### D-34 A commit is a document
@@ -2314,7 +2317,7 @@ document" and an upload lists the file under `failed`. The Documents page asks b
 another corpus holds the document. The Approvals dialog for a document and the confirmation for removing the
 uploaded-documents source say that the document is deleted.
 
-**Why.** A detach used to leave the document stored. Under D-40's rule that a hash grants nothing, a key could
+**Why.** A detach used to leave the document stored. Under the rule that a hash grants nothing ([07](07-auth.md)), a key could
 attach it again only through a corpus it reached that held it, so a document detached from every corpus could be
 attached by an administrator alone, was listed nowhere, and kept its bytes and extracted text indefinitely. A key
 that administers a corpus over the API could not undo its own detach. Treating the last detach as a delete
@@ -2359,7 +2362,7 @@ back. No record of who uploaded a document is kept.
 
 **Rejected.** Recording the uploader of a document so that it can attach the document again: it needs an owner
 column and a rule for a key that is revoked or whose reach changes. Letting any key that can search attach a
-document that no corpus holds: a hash would then grant access to the content, against D-40. Keeping the
+document that no corpus holds: a hash would then grant access to the content, against that rule. Keeping the
 administrator's exception to attach an unheld document: it keeps unlisted bytes that only an administrator
 reaches. A timer that deletes unheld documents after a delay: nothing needs the delay, and it keeps the unreachable
 state for as long as it runs. An MCP tool to add a document: an agent that can call the upload endpoint already
@@ -2412,7 +2415,7 @@ keyed by language.
 
 ### D-45 embeddinggemma-2 has a built-in framing and is not the default
 
-**Status.** Accepted, 2026-11-10. Measured between 2026-10-07 and 2026-11-11 against Ollama 0.40.0,
+**Status.** Accepted and implemented, 2026-11-10 (#306). Released in 0.7.0. Measured between 2026-10-07 and 2026-11-11 against Ollama 0.40.0,
 0.40.4 and 0.40.15 on Linux with two NVIDIA GPUs.
 
 **Decision.** `embeddinggemma-2` gets a built-in framing and `embeddinggemma` stays the default. The
@@ -2495,10 +2498,10 @@ place.
    containing "bert". A decision model that answers `/api/embed` at all would pass the dimension probe.
 4. *Model identity.* Decided in [D-46](#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence).
 5. *The chunk size suggested for the alias.* The UI suggests 90% of the measured context: 7,335 tokens
-   (31,232 characters of prose) for `embeddinggemma-2:q8_0` against 1,805 for `embeddinggemma` (Test limits,
-   2026-11-11). The largest arms measured are about 4,200 tokens and show no gain on code, so the suggestion
-   for a long-context model is untested. Suggesting less than the model can take is a design change that is
-   recorded here and not made.
+   for `embeddinggemma-2:q8_0` against 1,805 for `embeddinggemma` (Test limits, 2026-11-11; its character
+   budget for the alias is 31,232, two thirds of the 46,848 characters of prose measured). The largest arms
+   measured are about 4,200 tokens and show no gain on code, so the suggestion for a long-context model is
+   untested. Suggesting less than the model can take is a design change that is recorded here and not made.
 
 **Cost.** The Models screen lists `embeddinggemma-2` tags that this record does not recommend. The
 measurement is dense-only on one repository. Running `scripts/bench/sweep.py` with the official
@@ -2509,7 +2512,7 @@ on both corpora, or when re-embedding every corpus stops being a cost worth weig
 
 ### D-46 A chunk set records what its model answers to a fixed sentence
 
-**Status.** Accepted and implemented, 2026-11-10.
+**Status.** Accepted and implemented, 2026-11-10 (#308). Released in 0.7.0.
 
 **Decision.** Each chunk set stores the vector its model returns for one fixed sentence (`ModelCanary.Text`), embedded
 without framing, in `chunk_sets.canary_vector`. A check embeds the sentence again and stores the cosine similarity
@@ -2588,7 +2591,7 @@ embedding call on that path has timed out under indexing load before, which `Emb
 
 ### D-47 A chunk set records the document template it was embedded with
 
-**Status.** Accepted and implemented, 2026-11-10.
+**Status.** Accepted and implemented, 2026-11-10 (#309). Released in 0.7.0.
 
 **Decision.** Each chunk set records the document template its model's profile gave when its vectors were last all
 embedded with one framing (`chunk_sets.FramingRecorded`, migration `ChunkSetsRecordTheirFraming`). `GET /healthz`
@@ -2654,7 +2657,7 @@ change that has to be built beside the live set and promoted.
 
 ### D-48 A history source can also index the repository's stashes
 
-**Status.** Accepted and implemented, 2026-11-12.
+**Status.** Accepted and implemented, 2026-11-12 (#318). Released in 0.7.0.
 
 **Decision.** A git-history source has a setting, `includeStashes` (default off), that adds two kinds of document to
 the commits it already indexes: one per stash, and one per distinct version of an untracked file a stash holds. The
@@ -2727,7 +2730,7 @@ name more than one ref, which the source does not have. Or when a stash holds en
 
 ### D-49 A history document is cut in sections, and search can filter on them
 
-**Status.** Accepted and implemented, 2026-11-13.
+**Status.** Accepted and implemented, 2026-11-13 (#323). Released in 0.7.0.
 
 **Decision.** The reader names three sections in the document of a commit or a stash: `message` (the header lines and
 the message), `stat` and `diff` (the patch, or the line saying it was left out). The chunker starts a chunk at the first
@@ -2860,7 +2863,7 @@ filter taking a list of sections would give.
 
 ### D-50 A search can ask for a phrase, and Qdrant checks the stored text
 
-**Status.** Accepted and implemented, 2026-11-14.
+**Status.** Accepted and implemented, 2026-11-14 (#326). Released in 0.7.0.
 
 **Decision.** `POST /api/search`, `POST /api/context` and the `search_index` tool take a `phrase`: the words every hit
 must contain, in that order. The request adds a `match.phrase` condition on the payload field `content` to the filter that
@@ -2926,9 +2929,9 @@ corpus. The condition was also run through the .NET client against a throwaway Q
 - **Matching is by word.** A run of letters and digits is a word, anything else separates words, case is ignored, the
   words are adjacent and in order. `chunk set id` finds `chunk_set_id`; `refresh` does not find `RefreshAsync`. There is no
   stemming and no folding of accents, ligatures or Unicode normalisation forms.
-- **Phrase searches need Qdrant 1.15.0 or later**, where the condition was added. The bundled image is 1.20.0. How an older
-  external Qdrant answers one was not tested. A Qdrant release that changed how an unindexed phrase condition is
-  evaluated would show as errors or empty results on phrase searches only.
+- **Phrase searches need Qdrant 1.15.0 or later**, where the condition was added. The bundled image is 1.20.0
+  (1.20.1 as of 0.7.1). How an older external Qdrant answers one was not tested. A Qdrant release that changed how
+  an unindexed phrase condition is evaluated would show as errors or empty results on phrase searches only.
 - **Nothing limits how many phrase searches run at once.** Nothing limits searches in general either: no rate limit and no
   deadline on the Qdrant calls. A phrase search occupies Qdrant for the times above.
 - **In `keyword` mode the candidates are the chunks that share a word with `query`**, and a query of only stop words and
@@ -2949,7 +2952,7 @@ needs matching inside a word.
 
 ### D-51 A Claude Code transcript is indexed as its conversation
 
-**Status.** Accepted and implemented, 2026-11-14.
+**Status.** Accepted and implemented, 2026-11-14 (#327). Released in 0.7.0.
 
 **Decision.** A `.jsonl` file whose first records have the shape of a Claude Code session transcript is read by an
 extractor (`ClaudeTranscriptTextExtractor`) on any workspace source. Its document is the conversation: the user's and the

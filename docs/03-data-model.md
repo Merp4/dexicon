@@ -72,7 +72,9 @@ The listing is logical. It follows the EF Core model (`CatalogDbContext` and
 
 The listing was compared with the `sqlite_master` of a catalogue created by the shipped
 migrations (through `KeyReachIsExplicit`) for table, column, nullability, type,
-foreign-key action and index.
+foreign-key action and index. The four `chunk_sets` columns added after it
+(`ChunkSetsRecordAModelCanary` and `ChunkSetsRecordTheirFraming`, all nullable, no `DEFAULT`)
+were taken from those two migrations and the model snapshot.
 
 ```sql
 -- Identity ------------------------------------------------------------------

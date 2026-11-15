@@ -21,7 +21,7 @@ for a query. See [13](13-integration.md).
 > you choose the corpora it may reach and copy the command below. Nothing is minted for you
 > on first run: what is printed once is the admin password, which signs you in
 > (`docker compose logs dexicon | grep -A 2 "admin password"`; it is the quoted value on the
-> third line, and the quotes are not part of it).
+> third line of that output, and the quotes are not part of it).
 >
 > For scripted setup with no browser, set `DEXICON_BOOTSTRAP_TOKEN` in `.env` to a value
 > of your own and restart; it is adopted with `search` and `ingest`, and reaches every
@@ -253,7 +253,9 @@ It merges into an existing config rather than replacing it, backs the file up fi
 prints the file and URL it wrote with the key masked as `dex_***`. `-WhatIf` shows the
 change (the JSON, or for Claude Code the command, key masked) without making it.
 `-Project` is the directory to write into for project scope, defaulting to the current one
-rather than the Dexicon checkout.
+rather than the Dexicon checkout. `-Url` replaces the default endpoint,
+`http://localhost:8477/mcp`, for an agent that reaches Dexicon at another address (see
+[Anything else](#anything-else)).
 
 `-Client claude-code` defaults to `-Scope user`, for the reason under
 [Claude Code](#claude-code) above, rather than the `project` default every other client
@@ -299,3 +301,17 @@ later version can replace it, and so `-Uninstall` knows what to take away.
 It is invocable both ways. Claude reaches for it on its own, from the `description` in its
 front matter, and `/dexicon-search how are refresh tokens revoked` runs that search
 directly.
+
+## Hooks for Claude Code
+
+```powershell
+./scripts/install-mcp.ps1 -What hooks                    # SessionStart only
+./scripts/install-mcp.ps1 -What hooks -WithContextHook   # and the per-prompt one
+```
+
+Two read-only hooks, both optional: `dexicon-corpora.py` announces the reachable corpora once
+per session, and `dexicon-context.py` retrieves one cited passage for each prompt (installed
+either way, registered only with `-WithContextHook`, because it searches on every message).
+The hooks are Python and read the connection and key from `dexicon-hooks.env` beside them,
+a file that holds the key in plain text. [hooks/claude/README.md](../hooks/claude/README.md)
+lists the settings.
