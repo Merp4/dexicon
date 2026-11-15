@@ -17,7 +17,7 @@ public sealed record SearchRequest
     public SearchMode Mode { get; init; } = SearchMode.Hybrid;
     public int Limit { get; init; } = 10;
 
-    /// <summary>A word match on the file path, not a prefix: see <see cref="SearchQuery.PathPrefix"/>.</summary>
+    /// <summary>Files under this path, at whole path segments: see <see cref="SearchQuery.PathPrefix"/>.</summary>
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }

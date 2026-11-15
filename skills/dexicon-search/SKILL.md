@@ -1,5 +1,5 @@
 ---
-# dexicon-skill-version: 9
+# dexicon-skill-version: 10
 name: dexicon-search
 description: Search indexed code and documents by meaning using the Dexicon MCP server. Use when looking for where something is implemented, how a concept is handled, or what a document says about a topic — anything where you know the idea but not the term. Also covers reading an indexed file back, diagnosing an empty result, and changing what is indexed, including adding folders and corpora, and asking for a removal, when the key allows it.
 ---
@@ -76,9 +76,9 @@ the chunks that hold the phrase by a question.
 Narrow with `pathPrefix`, `source`, `language` or `symbol` before raising `limit`. Twenty
 results across the whole index is usually worse than eight from `src/Auth/`. `pathPrefix` is
 relative to a source's root, so it cannot select a folder that is itself a source's root;
-`source` does that. `pathPrefix` matches by whole words, not by prefix: each word of the
-value (split at characters that are not letters or digits) must appear in the path, in any
-order and ignoring case, so `src/Auth` also finds `lib/src/Auth/b.cs`. A result names its source's root (`· in books/manuals/Architecture` after
+`source` does that. `pathPrefix` takes a folder or a file, matched at whole path segments
+and ignoring case, so `src/Auth` finds `src/Auth/a.cs` and not `lib/src/Auth/b.cs` or
+`src/Authorization/c.cs`. A result names its source's root (`· in books/manuals/Architecture` after
 the path) when the results span several sources, and a source that matches nothing is
 refused with an error that lists them, up to 1,500 characters and then how many more.
 A `source` that names a parent folder covers every source beneath it:
