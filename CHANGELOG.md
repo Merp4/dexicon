@@ -16,6 +16,74 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.7.2 — 2026-11-15
+
+### ⚠️ Upgrading
+
+- **`pathPrefix` selects the files under a path, so existing values narrow.** It takes a folder or a file, matched at whole path segments and ignoring case, relative to
+  the source root. Until 0.7.1 it matched the words of the value anywhere in the path, so `src/Auth` also found `lib/src/Auth/b.cs` and `src/Auth.Tests/t.cs`; it now finds
+  `src/Auth/a.cs` and `src/Auth/deep/b.cs` only. A bare name such as `Auth` or `README.md` matches only at the source root, and a value that is only an extension (`cs`) no
+  longer selects files by extension. A backslash counts as a slash, and a value that names no segment (`/`, `./`) adds no condition. The `pathPrefix` description in the MCP
+  `tools/list` answer changed with it. A client that sent a bare name or a deeper fragment has to send the path from the source root.
+- **The first start writes one payload field on every chunk point.** Each chunk now carries `path_prefixes` (the folders above its file, and the file, lower-cased), with a
+  keyword index next to the one on `file_path`. `PathPrefixBackfillService` sets the field in place on chunks stored earlier, at host start, in pages of 1,000 points; it reads no
+  vector and embeds nothing again. On a copy of the live index (266,563 chunk points in two collections, restored from the 2026-11-14 backup into Qdrant v1.20.1, the app on an
+  empty catalogue) the first run set 2,952 points before a container restart interrupted it, and the second run set the other 263,611 in 11.8 minutes while probe stacks of this
+  release's test battery shared the host. All 266,563 points were then read back and each carried the prefixes of its own file (0 differences), and a third start set nothing.
+  Unfiltered vector searches against the same Qdrant kept a median of 15.8 ms while the backfill ran (12.2 ms after it). Until a chunk has the field, `pathPrefix` also matches it by the old word match on `file_path`, so a search during the migration returns
+  every file under the path plus the word match's extra hits among the chunks not yet converted. If Qdrant cannot be reached at start, the service tries again every minute,
+  ten times, and logs one warning at the end; a later start finishes the job.
+- **Nothing is read again.** No migration, chunker version or extractor version changed. In a rehearsal of the upgrade from 0.7.1 over a workspace of 86 files (real Claude Code transcripts, 40 real documents, edge files, a Markdown folder,
+  a history source holding a stash, and 24 copies of one PDF), a refresh of each of the 6 corpora read 0 files and wrote 0 chunks, every catalogue row kept its
+  status, chunks and extracted characters, the catalogue still equalled Qdrant (6,561 points before and after), and `/healthz` reported 0 changed models and 0 changed
+  framings. Run on a copy of the 2026-11-15 live catalogue, the candidate added no migration (25 before and after).
+- **Rolling back to 0.7.1** leaves the new field and index in place. 0.7.1 does not read them, the chunks it writes have no `path_prefixes`, and the next start of 0.7.2
+  or later sets it.
+- **The skill changes (`dexicon-skill-version: 10`).** Running `scripts/install-mcp.ps1` again upgrades installed copies; the hooks are unchanged.
+
+### Fixed
+
+- **`pathPrefix` is a path prefix (#348).** Qdrant evaluated the argument as a text condition on `file_path`, which matches the words of the value as whole words in any
+  order anywhere in the path, while the tool description said "under this path" (#347 described the real behaviour in the documents and the description first). The argument is
+  now compared with `path_prefixes` by equality, so `src/Auth` finds `src/Auth/a.cs` and does not find `lib/src/Auth/b.cs`, `src/Auth.Tests/t.cs` or `src/Authorization/c.cs`,
+  and `src/Au` finds nothing. On the 266,563-point copy, after the backfill, a `pathPrefix` search took a median of 6.4 ms (95th percentile 11.1 ms) against 829 ms (916 ms)
+  for the 0.7.1 word match on the same 12 sampled folders, 24 queries each, with a test battery running on the host; an unfiltered search took 12.2 ms. During the backfill the new filter
+  cost what the old one did (median 407 ms against 462 ms), because a chunk without the field is matched by the word match. A stored path and an argument are read by the same
+  rules (a backslash is a slash, segments are trimmed, `.` and empty segments are dropped), so a document uploaded as `docs\guide.pdf` is found by `docs`.
+- **A saved model profile applies to the next search (#346).** The query-embedding cache (five minutes) was keyed by the model target and the query text alone. A profile
+  saved with a different query template kept answering with the embedding made under the old template until the entry expired. The key now includes the template.
+
+### Verified against 0.7.1
+
+On the code of this release (`2e5ee8d`; the release commit changes only this file) unless a line says otherwise. 654 expectations over fourteen probe phases passed and none
+failed: the thirteen phases of the 0.7.1 release (628) and one for `pathPrefix` (26).
+
+- CI on `2e5ee8d`: 3,748 tests, 3,746 passed, 2 skipped, 0 build warnings.
+- `pathPrefix`, end to end on real images and a real Qdrant: a workspace of seven files whose paths tell a word match from a prefix match was indexed by the 0.7.1 image,
+  and this build then replaced it on the same data. Its backfill set `path_prefixes` on all 7 points and logged the count; 12 values (`src/Auth`, `src`, `SRC/auth/`, `src/Au`,
+  `src/Auth/a.txt`, `lib`, `Auth`, `Readme.txt`, `src\Auth`, `src/Authorization`, `/` and none) returned the files under the path and no others; a file added afterwards
+  was stored with its folders; and a file whose chunks had the field removed through Qdrant's API was still found by the word match until a restart set it again.
+- The backfill at the size of the live index (see Upgrading): 266,563 chunk points read back, 0 with prefixes different from their file's, and `pathPrefix` searches on the
+  copy took a median of 6.4 ms against 829 ms for the 0.7.1 word match.
+- An upgrade rehearsal on a copy of the 2026-11-15 live catalogue: 25 migrations and none added, `PRAGMA integrity_check` ok, 0 foreign key violations; the authenticated smoke test
+  and the detach probes reported 0 failures, 30 probes of 15 JSON-body operations returned no 5xx, and the checks after a restart with seeded stray files reported 0 failures.
+- The same three text files embedded with `embeddinggemma` by 0.7.1 and by this build into separate stores gave byte-identical vectors (3 chunks, 2,405 components, largest
+  difference 0.0), and nine searches in the three modes returned the same hits with the same scores.
+- 42 MCP requests went to both builds on the same catalogue: 38 answers were identical, and the 4 `tools/list` answers differed in one field each, the `pathPrefix`
+  description; no other field of any answer differed.
+- The probe stacks of this battery logged the same 22 warning and error classes as those of the 0.7.1 battery (83 lines against 84).
+- Not run for this release, because nothing they cover changed: the passes over 40 real documents (no extractor or chunker file changed) and the web UI walk (nothing under
+  `clients` changed since 0.7.1).
+
+### Known issues
+
+- A PDF first extracted by 0.7.0 or earlier keeps the cached text it was given, which may differ from what 0.7.1 and later would extract. A later extractor version bump
+  re-extracts and re-embeds every PDF.
+
+### Changed
+
+- The `dexicon-search` skill, `docs/03`, `docs/05`, `docs/06` and `docs/13` describe `pathPrefix` as a path prefix and the `path_prefixes` payload field and its index.
+
 ## 0.7.1 — 2026-11-15
 
 ### ⚠️ Upgrading
