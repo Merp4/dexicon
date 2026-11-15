@@ -46,13 +46,21 @@ search(query, scope, mode, limit, filters)
   against the already-authorised scope, so naming a source can only narrow a search,
   never reach into a corpus the caller cannot see.
 
-  `pathPrefix` is a word match on `file_path`, not an anchored prefix. The value is split into
-  words at every character that is not a letter or a digit, and a chunk matches when its path
-  holds each of those words as a whole word, in any order and anywhere in the path, ignoring
-  case. `src/Auth` matches `src/Auth/a.cs`, `lib/src/Auth/b.cs`, `Auth/src/x.cs` and
-  `src/Auth.Tests/t.cs`, and does not match `src/Authorization/c.cs`. A longer value narrows
-  further. Qdrant evaluates it as a text condition on the keyword-indexed `file_path`
-  (`QdrantVectorStore`).
+  `pathPrefix` means files under a path: a folder or a file, matched at whole path segments and
+  ignoring case, relative to the source's root. `src/Auth` matches `src/Auth/a.cs` and
+  `src/Auth/deep/b.cs`, and does not match `lib/src/Auth/b.cs`, `src/Auth.Tests/t.cs` or
+  `src/Authorization/c.cs`; `src/Au` matches nothing. A bare name matches only at the source
+  root: `Auth` finds a root-level `Auth` and not `lib/Auth`. A backslash counts as a slash, and a value
+  that names no segment (`/`, `./`) adds no condition. Each chunk stores `path_prefixes`, the
+  folders above its file and the file itself, lower-cased, and the filter is an equality match on
+  that keyword-indexed field.
+
+  A chunk stored before that field existed has none. The host sets it in place when it starts
+  (`PathPrefixBackfillService`: a scroll over the chunks that lack it, writing only that field,
+  with no vector read and no embedding; an empty scroll when nothing is left), and until a chunk
+  has it the filter matches that chunk by the words of the value on `file_path`: its path must
+  hold every word of the value as a whole word, in any order and anywhere. So a search is
+  complete during the migration and exact after it.
 
 ## Retrieval
 
@@ -86,7 +94,7 @@ where `$scope` expands to
     { "key": "kind",      "match": { "value": "chunk" } },
     { "key": "corpus_id", "match": { "any": ["01JD...", "01JE..."] } }
     // plus the chunk_set_id of each corpus in scope, and any caller filters:
-    // source_id, file_path prefix, language, symbols, section, and for a phrase a
+    // source_id, path_prefixes, language, symbols, section, and for a phrase a
     // match.phrase condition on content
 ] }
 ```

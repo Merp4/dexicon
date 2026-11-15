@@ -138,11 +138,10 @@ public sealed record SearchQuery
     public IReadOnlyList<string>? SourceIds { get; init; }
 
     /// <summary>
-    /// A word match on <c>file_path</c>, not a prefix. The store sends it as a text condition on the
-    /// keyword-indexed field, and Qdrant splits the value into words at every character that is not a
-    /// letter or a digit and matches a path that holds each of them as a whole word, in any order and
-    /// anywhere, ignoring case (measured on v1.20.1): <c>src/Auth</c> matches <c>lib/src/Auth/b.cs</c> and
-    /// <c>src/Auth.Tests/t.cs</c> and does not match <c>src/Authorization/c.cs</c>.
+    /// Files under this path: a folder or a file, at whole path segments, ignoring case, relative to the source's
+    /// root. The store matches it against <c>path_prefixes</c>, the folders above each chunk's file and the file
+    /// (see <see cref="Vectors.QdrantVectorStore"/>), and a chunk that has none yet is matched by the words of the
+    /// value on <c>file_path</c>. <c>src/Auth</c> matches <c>src/Auth/a.cs</c> and not <c>lib/src/Auth/b.cs</c>.
     /// </summary>
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }

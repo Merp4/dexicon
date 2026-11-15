@@ -66,6 +66,16 @@ public interface IVectorStore
     /// therefore match no query. Returns how many collections were touched.
     /// </summary>
     Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Give every chunk written before <c>path_prefixes</c> existed its value, in place: only that field is
+    /// written, so no vector is read or embedded again. Safe to run again and with a pass indexing, because it
+    /// selects the chunks that still have none and a chunk written now carries its own. Returns how many points
+    /// it updated; throws when a collection's index on the field cannot be created or Qdrant refuses a write, so
+    /// that a caller can try again (a point that a pass deleted since the scroll answers NotFound for its whole
+    /// batch, and the next run no longer lists it).
+    /// </summary>
+    Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default);
     Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default);
 
     /// <summary>
@@ -212,6 +222,8 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
                 new PayloadIndexParams { KeywordIndexParams = new KeywordIndexParams { IsTenant = true } }, ct);
             created &= await EnsureIndexAsync(collection, "kind", PayloadSchemaType.Keyword, null, ct);
             created &= await EnsureIndexAsync(collection, "file_path", PayloadSchemaType.Keyword, null, ct);
+            // The folders above each chunk's path: what a path filter matches by equality.
+            created &= await EnsureIndexAsync(collection, PathPrefixes.Field, PayloadSchemaType.Keyword, null, ct);
             created &= await EnsureIndexAsync(collection, "language", PayloadSchemaType.Keyword, null, ct);
             created &= await EnsureIndexAsync(collection, "symbols", PayloadSchemaType.Keyword, null, ct);
             created &= await EnsureIndexAsync(collection, "section", PayloadSchemaType.Keyword, null, ct);
@@ -300,6 +312,7 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
             p.Payload.Add("chunk_set_id", c.ChunkSetId);
             p.Payload.Add("source_id", c.SourceId);
             p.Payload.Add("file_path", c.FilePath);
+            p.Payload.Add(PathPrefixes.Field, PathPrefixes.Of(c.FilePath));
             p.Payload.Add("file_hash", c.FileHash);
             p.Payload.Add("start_line", c.StartLine);
             p.Payload.Add("end_line", c.EndLine);
@@ -451,6 +464,62 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         }
 
         return touched;
+    }
+
+    /// <summary>Points read and written per round of <see cref="BackfillPathPrefixesAsync"/>.</summary>
+    private const uint BackfillPage = 1000;
+
+    public async Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default)
+    {
+        long updated = 0;
+        var collections = await _client.ListCollectionsAsync(ct);
+
+        foreach (var collection in collections.Where(c => c.StartsWith("dexicon__", StringComparison.Ordinal)))
+        {
+            // The index first. The scroll below selects on the field being empty, and without an index on it that is a
+            // walk of every point of the collection on every page.
+            if (!await EnsureIndexAsync(collection, PathPrefixes.Field, PayloadSchemaType.Keyword, null, ct))
+                throw new InvalidOperationException($"The index on {PathPrefixes.Field} of {collection} could not be created.");
+
+            var filter = new Filter();
+            filter.Must.Add(Keyword("kind", "chunk"));
+            filter.Must.Add(new Condition { IsEmpty = new IsEmptyCondition { Key = PathPrefixes.Field } });
+            var selector = new WithPayloadSelector { Include = new PayloadIncludeSelector { Fields = { "file_path" } } };
+
+            long inCollection = 0;
+            PointId? offset = null;
+            while (true)
+            {
+                var page = await _client.ScrollAsync(collection, filter, limit: BackfillPage, offset: offset,
+                    payloadSelector: selector, vectorsSelector: false, cancellationToken: ct);
+                if (page.Result.Count == 0) break;
+
+                // One write per file of the page: the chunks of a file share their value.
+                var operations = new List<PointsUpdateOperation>();
+                foreach (var file in page.Result.GroupBy(p => p.Payload.TryGetValue("file_path", out var v) ? v.StringValue : ""))
+                {
+                    var prefixes = PathPrefixes.Of(file.Key);
+                    if (prefixes.Length == 0) continue;
+
+                    var set = new PointsUpdateOperation.Types.SetPayload { PointsSelector = new PointsSelector { Points = new PointsIdsList() } };
+                    set.Payload.Add(PathPrefixes.Field, prefixes);
+                    foreach (var point in file) set.PointsSelector.Points.Ids.Add(point.Id);
+                    operations.Add(new PointsUpdateOperation { SetPayload = set });
+                    inCollection += file.Count();
+                }
+
+                if (operations.Count > 0) await _client.UpdateBatchAsync(collection, operations, cancellationToken: ct);
+
+                if (page.NextPageOffset is null) break;
+                offset = page.NextPageOffset;
+            }
+
+            if (inCollection > 0)
+                _log.LogInformation("Set {Field} on {Points} point(s) of {Collection}", PathPrefixes.Field, inCollection, collection);
+            updated += inCollection;
+        }
+
+        return updated;
     }
 
     public Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default)
@@ -638,15 +707,8 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
         if (!string.IsNullOrWhiteSpace(q.Language)) f.Must.Add(Keyword("language", q.Language));
         if (!string.IsNullOrWhiteSpace(q.Symbol)) f.Must.Add(Keyword("symbols", q.Symbol));
         if (!string.IsNullOrWhiteSpace(q.Section)) f.Must.Add(Keyword("section", q.Section));
-        if (!string.IsNullOrWhiteSpace(q.PathPrefix))
-            f.Must.Add(new Condition
-            {
-                Field = new FieldCondition
-                {
-                    Key = "file_path",
-                    Match = new Match { Text = q.PathPrefix },
-                },
-            });
+        if (PathPrefixes.Normalise(q.PathPrefix) is { } prefix)
+            f.Must.Add(UnderPath(prefix, q.PathPrefix!.Trim()));
 
         // The chunk text is the only place the order of words is kept: the sparse vector is a
         // bag of terms. `content` has no payload index and this adds none, so Qdrant tokenises
@@ -666,6 +728,27 @@ public sealed class QdrantVectorStore : IVectorStore, IDisposable
 
     private static Condition Keyword(string key, string value) =>
         new() { Field = new FieldCondition { Key = key, Match = new Match { Keyword = value } } };
+
+    /// <summary>
+    /// The chunks under a path: those whose <c>path_prefixes</c> holds it, which is a folder above the chunk's file
+    /// or the file itself. A chunk written before that field existed carries none until
+    /// <see cref="BackfillPathPrefixesAsync"/> reaches it, and until then it is matched the way every chunk was:
+    /// by the words of the value on <c>file_path</c>, so a search never loses a file to the migration.
+    /// </summary>
+    private static Condition UnderPath(string normalised, string asGiven)
+    {
+        var notYetWritten = new Filter();
+        notYetWritten.Must.Add(new Condition { IsEmpty = new IsEmptyCondition { Key = PathPrefixes.Field } });
+        notYetWritten.Must.Add(new Condition
+        {
+            Field = new FieldCondition { Key = "file_path", Match = new Match { Text = asGiven } },
+        });
+
+        var either = new Filter();
+        either.Should.Add(Keyword(PathPrefixes.Field, normalised));
+        either.Should.Add(new Condition { Filter = notYetWritten });
+        return new Condition { Filter = either };
+    }
 
     /// <summary>
     /// Payload and score separately, because chunks arrive two ways: scored, from a

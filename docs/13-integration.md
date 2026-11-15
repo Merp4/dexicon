@@ -136,7 +136,8 @@ values in a response are PascalCase (`"mode": "Hybrid"`, `"state": "Ready"`); th
 | `maxChars` | 8000 | Characters for the whole passage, headers included, 1-200,000. |
 | `neighbours` | 0 | Chunks to include either side of each hit, 0-5. |
 | `lineNumbers` | false | Prefix each line with its number in the file. |
-| `pathPrefix`, `source`, `language`, `symbol`, `section` | — | The search filters, unchanged. |
+| `source`, `language`, `symbol`, `section` | — | The search filters, unchanged. |
+| `pathPrefix` | — | Files under this path, matched at whole path segments from the source root and ignoring case: `src/Auth` finds `src/Auth/a.cs`. A bare name such as `Auth` or `README.md` matches only at the source root. [05](05-search.md#shape-of-a-query). |
 | `phrase` | — | Keep hits that contain these words in this order, ignoring case and punctuation. With a blank `query` the phrase is the query. Costs query time on a large scope: [05](05-search.md#exact-phrases). |
 | `distinctTitles` | true | Collapse one document held in two formats. |
 

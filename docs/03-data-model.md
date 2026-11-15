@@ -474,6 +474,7 @@ points from that corpus when filtered to a different one.
 { "field_name": "chunk_set_id", "field_schema": "keyword" }
 { "field_name": "source_id",    "field_schema": "keyword" }
 { "field_name": "file_path",    "field_schema": "keyword" }
+{ "field_name": "path_prefixes", "field_schema": "keyword" }
 { "field_name": "language",     "field_schema": "keyword" }
 { "field_name": "kind",         "field_schema": "keyword" }
 { "field_name": "symbols",      "field_schema": "keyword" }
@@ -514,6 +515,7 @@ overwrite each other, without error, and only for the paths they share.
   "chunk_set_id": "01JD...",         // which chunking produced this — indexed, ordinary filter
   "source_id":   "01JD...",
   "file_path":   "src/Auth/TokenService.cs",   // relative to source root
+  "path_prefixes": ["src", "src/auth", "src/auth/tokenservice.cs"],   // the folders above file_path and the file, lower-cased — indexed; what pathPrefix matches
   "file_hash":   "a1b2c3...",        // lets a reindex detect staleness without a catalog hit
   "media_type":  "text/x-csharp",
   "language":    "csharp",

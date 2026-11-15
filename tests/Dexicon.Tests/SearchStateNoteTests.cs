@@ -98,6 +98,7 @@ public sealed class SearchStateNoteTests : IAsyncLifetime
         public Task DeleteChunkSetAsync(string collection, string chunkSetId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<string, int>?> CountByFileAsync(string collection, string chunkSetId, string sourceId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<SearchHit>> GetFileChunksAsync(string collection, string chunkSetId, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<SearchResponse> SearchAsync(SearchQuery query, float[]? denseVector, SparseVector sparse, CancellationToken ct = default) =>
