@@ -722,6 +722,8 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // change that starts calling one of these is visible instead of silently passing.
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) =>
             throw new NotSupportedException();
+        public Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default) =>
+            throw new NotSupportedException();
         /// <summary>
         /// Answers a search. Unset, a search throws: an indexing run does not reach one, and a change that starts to
         /// is visible. A test that searches sets it and reads the query the store was given.

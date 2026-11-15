@@ -131,6 +131,7 @@ builder.Services.AddHostedService<ScheduledRefreshService>();
 // Reads each chunk set's model canary every few hours (ModelCanary), so a model replaced under a set
 // is reported without waiting for the next pass to find it.
 builder.Services.AddHostedService<ModelCanaryService>();
+builder.Services.AddHostedService<PathPrefixBackfillService>();
 
 // Discovery keeps the guarantee D-32 gave it — a sweep never waits behind indexing —
 // as a work type with its own slots, rather than as a second queue and worker.

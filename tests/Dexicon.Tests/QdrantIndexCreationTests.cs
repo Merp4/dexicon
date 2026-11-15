@@ -15,7 +15,7 @@ namespace Dexicon.Tests;
 public sealed class QdrantIndexCreationTests
 {
     private const string Collection = "dexicon__ollama__embeddinggemma__768";
-    private const int IndexedFields = 8;
+    private const int IndexedFields = 9;
 
     /// <summary>A channel that answers every call and can fail the creation of a payload index.</summary>
     private sealed class FlakyIndexInvoker : CallInvoker

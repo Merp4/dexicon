@@ -159,6 +159,7 @@ public sealed class CommittedChangeTests
             string sourceId, CancellationToken ct = default) => inner.CountByFileAsync(collection, chunkSetId, sourceId, ct);
 
         public Task<int> PurgeUnsetChunksAsync(CancellationToken ct = default) => inner.PurgeUnsetChunksAsync(ct);
+        public Task<long> BackfillPathPrefixesAsync(CancellationToken ct = default) => inner.BackfillPathPrefixesAsync(ct);
 
         public Task DeleteCorpusAsync(string collection, string corpusId, CancellationToken ct = default) =>
             inner.DeleteCorpusAsync(collection, corpusId, ct);
