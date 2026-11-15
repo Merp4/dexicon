@@ -86,11 +86,12 @@ public sealed class SearchPhraseTests
     public void ALocatorThatTimesOutPlacesNothingInsteadOfFailing()
     {
         // The locator only centres the window. A hit it cannot place is windowed on the query, so the search
-        // answers. The phrase occurs once, at the end, so the answer without a timeout is a match.
+        // answers. The phrase occurs once, at the end, so the answer without a timeout is a match. The reference
+        // search has no timeout: with the default of 2 seconds it timed out on a loaded CI runner and failed here.
         var phrase = string.Join(' ', Enumerable.Repeat("a", 200)) + " b";
         var text = string.Concat(Enumerable.Repeat("a ", 60_000)) + "b";
 
-        SearchPhrase.Create(phrase)!.TryFind(text, out var index, out _).ShouldBeTrue();
+        SearchPhrase.Create(phrase, Timeout.InfiniteTimeSpan)!.TryFind(text, out var index, out _).ShouldBeTrue();
         index.ShouldBeGreaterThan(0);
 
         var timesOut = SearchPhrase.Create(phrase, TimeSpan.FromMilliseconds(1))!;
