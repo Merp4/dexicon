@@ -137,6 +137,13 @@ public sealed record SearchQuery
     /// </summary>
     public IReadOnlyList<string>? SourceIds { get; init; }
 
+    /// <summary>
+    /// A word match on <c>file_path</c>, not a prefix. The store sends it as a text condition on the
+    /// keyword-indexed field, and Qdrant splits the value into words at every character that is not a
+    /// letter or a digit and matches a path that holds each of them as a whole word, in any order and
+    /// anywhere, ignoring case (measured on v1.20.1): <c>src/Auth</c> matches <c>lib/src/Auth/b.cs</c> and
+    /// <c>src/Auth.Tests/t.cs</c> and does not match <c>src/Authorization/c.cs</c>.
+    /// </summary>
     public string? PathPrefix { get; init; }
     public string? Language { get; init; }
     public string? Symbol { get; init; }

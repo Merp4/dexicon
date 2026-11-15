@@ -14,6 +14,7 @@ public sealed record ContextRequest
     /// <summary>How many hits to consider. What reaches the passage is decided by the budget.</summary>
     public int Limit { get; init; } = 10;
 
+    /// <summary>A word match on the file path, not a prefix: see <see cref="SearchQuery.PathPrefix"/>.</summary>
     public string? PathPrefix { get; init; }
     public string? Source { get; init; }
     public string? Language { get; init; }
