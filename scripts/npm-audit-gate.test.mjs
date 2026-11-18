@@ -127,6 +127,26 @@ test('another advisory for the accepted package fails', () => {
   assert.deepEqual(result.tolerated.map((a) => a.id), [PICOMATCH]);
 });
 
+test('the accepted advisory rescored to critical fails', () => {
+  const result = check(report(advisory(PICOMATCH, 'picomatch', 'critical')));
+  assert.deepEqual(result.rejected.map((a) => a.id), [PICOMATCH]);
+  assert.deepEqual(result.tolerated, []);
+});
+
+test('a package rated high whose only advisory is moderate throws', () => {
+  const r = report(advisory('GHSA-aaaa-bbbb-cccc', 'left-pad', 'moderate'));
+  r.vulnerabilities.derived = { name: 'derived', severity: 'high', via: ['left-pad'] };
+  assert.throws(() => check(r), /derived is rated high and names no advisory/);
+});
+
+test('a package severity that npm does not report throws', () => {
+  const r = report(advisory(PICOMATCH, 'picomatch', 'high'));
+  for (const severity of ['HIGH', 'severe', undefined]) {
+    r.vulnerabilities.odd = { name: 'odd', severity, via: [] };
+    assert.throws(() => check(r), /odd has the severity/, String(severity));
+  }
+});
+
 test('a report that counts high or critical findings but lists no package throws', () => {
   for (const counts of [{ high: 3, critical: 0 }, { high: 0, critical: 2 }]) {
     const empty = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: counts } };
@@ -146,10 +166,11 @@ test('a dependency cycle among packages with no advisory ends and throws', () =>
   assert.throws(() => check(cycle), /names no advisory/);
 });
 
-test('a severity that npm does not report throws', () => {
+test('an advisory severity that npm does not report throws, under a package rated with a valid one', () => {
   for (const severity of ['severe', 'High', 'HIGH', undefined]) {
-    assert.throws(
-      () => check(report(advisory('GHSA-aaaa-bbbb-cccc', 'left-pad', severity))), /severity/, String(severity));
+    const r = report(advisory(PICOMATCH, 'picomatch', 'high'));
+    r.vulnerabilities.picomatch.via.push(advisory('GHSA-aaaa-bbbb-cccc', 'picomatch', severity));
+    assert.throws(() => check(r), /Advisory .* has the severity/, String(severity));
   }
 });
 
@@ -157,6 +178,7 @@ test('every accepted entry names its package, a reason and the condition that re
   for (const [id, entry] of accepted) {
     assert.match(id, /^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/);
     assert.ok(entry.package);
+    assert.ok(['high', 'critical'].includes(entry.severity));
     assert.match(entry.reason, /Remove this entry once/);
   }
 });

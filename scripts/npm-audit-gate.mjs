@@ -13,14 +13,16 @@ const severities = new Set(['info', 'low', 'moderate', 'high', 'critical']);
 const failing = new Set(['high', 'critical']);
 
 /**
- * Advisories accepted for now, by GHSA id. An entry names the package, the reason and the
- * condition that removes it. An advisory is accepted only when the package name matches too.
+ * Advisories accepted for now, by GHSA id. An entry names the package, the severity it was
+ * accepted at, the reason and the condition that removes it. An advisory is accepted only when
+ * the package and the severity match too, so a rescored advisory fails again.
  */
 export const accepted = new Map([
   [
     'GHSA-fc5q-39xc-vjpf',
     {
       package: 'picomatch',
+      severity: 'high',
       reason:
         'ReDoS in extglob matching (CVE-2026-112366), versions up to 4.0.7, with no patched release ' +
         '(checked 2026-11-18). picomatch is reached only through development dependencies (vite, ' +
@@ -74,6 +76,9 @@ export function advisories(report) {
       typeof via === 'object' ? failing.has(via.severity) : leadsToAdvisory(via, seen));
   };
   for (const [name, node] of Object.entries(nodes)) {
+    if (!severities.has(node.severity)) {
+      throw new Error(`The package ${name} has the severity ${JSON.stringify(node.severity)}, which is not one npm reports`);
+    }
     if (failing.has(node.severity) && !leadsToAdvisory(name)) {
       throw new Error(`The package ${name} is rated ${node.severity} and names no advisory`);
     }
@@ -94,7 +99,8 @@ export function check(report, acceptedAdvisories = accepted) {
   const tolerated = [];
   for (const advisory of advisories(report)) {
     const entry = acceptedAdvisories.get(advisory.id);
-    if (entry && entry.package === advisory.package) tolerated.push({ ...advisory, reason: entry.reason });
+    const matches = entry && entry.package === advisory.package && entry.severity === advisory.severity;
+    if (matches) tolerated.push({ ...advisory, reason: entry.reason });
     else rejected.push(advisory);
   }
   return { rejected, tolerated };
