@@ -270,7 +270,12 @@ Covered operationally in [09](09-deployment.md); the security-relevant points:
   secrets), because a merge made on behalf of `GITHUB_TOKEN` starts no push-triggered
   workflows. The key sits in a second job that runs no code a Dependabot branch can change.
 - CI: `dotnet list package --vulnerable --include-transitive` and `npm audit`, both failing
-  the build on high severity. `Dexicon.Core` takes `Microsoft.Extensions.Caching.Memory`,
+  the build on high severity. The production npm dependencies (`npm audit --omit=dev`) have no
+  exceptions. Across all npm dependencies, `scripts/npm-audit-gate.mjs` fails on any high or
+  critical advisory it does not list, and on an audit report it cannot read. It lists one,
+  GHSA-fc5q-39xc-vjpf: a ReDoS in picomatch up to 4.0.7 with no patched release, reached only
+  through the Vite and Vitest development dependencies. The entry carries the condition that
+  removes it. `Dexicon.Core` takes `Microsoft.Extensions.Caching.Memory`,
   `DependencyInjection.Abstractions`, `Hosting.Abstractions`, `Http` and `Logging.Abstractions`
   from the ASP.NET Core shared framework, so `dotnet list package` does not report them; they
   update with the digest of the `aspnet` base image.

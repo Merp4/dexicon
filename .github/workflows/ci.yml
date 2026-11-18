@@ -213,11 +213,24 @@ jobs:
             exit 1
           fi
 
-      - name: npm audit
+      # The production dependencies come first, with no exceptions. The gate after it accepts the
+      # advisories listed in scripts/npm-audit-gate.mjs, and this step is what limits those to
+      # development dependencies.
+      - name: npm audit (production dependencies)
         working-directory: clients/web-ui
         run: |
           npm ci
-          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
+
+      # `npm audit --audit-level=high` cannot name an exception. The gate fails on any advisory of
+      # high or critical severity that its list does not accept, and on a report it cannot read.
+      # `npm audit` exits 1 when it finds something, so its exit code is left to the gate.
+      - name: npm audit (all dependencies)
+        working-directory: clients/web-ui
+        run: |
+          node --test ../../scripts/npm-audit-gate.test.mjs
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node ../../scripts/npm-audit-gate.mjs "$RUNNER_TEMP/npm-audit.json"
 
   image:
     name: Container image
