@@ -79,13 +79,25 @@ internal sealed class IndexingHarness : IAsyncDisposable
     public static Task<IndexingHarness> StartAsync(params string[] sourceRoots) =>
         StartAsync(null, sourceRoots);
 
+    /// <summary>
+    /// A harness whose logging goes to <paramref name="logs"/> as well, for a test that reads what a
+    /// component the harness builds says, Entity Framework Core included: the catalogue context is
+    /// built from the harness's own service provider, so its warnings land there.
+    /// </summary>
+    public static Task<IndexingHarness> StartWithLogsAsync(ILoggerProvider logs, params string[] sourceRoots) =>
+        StartCoreAsync(null, logs, sourceRoots);
+
     /// <param name="watcher">
     /// An extra command interceptor on the catalogue, for a test that has to act at a
     /// point inside a pass. Opening a window deliberately is the only way to be in one
     /// from outside, and hoping to land in it is a test that quietly stops testing.
     /// </param>
-    public static async Task<IndexingHarness> StartAsync(
-        IInterceptor? watcher, params string[] sourceRoots)
+    public static Task<IndexingHarness> StartAsync(
+        IInterceptor? watcher, params string[] sourceRoots) =>
+        StartCoreAsync(watcher, null, sourceRoots);
+
+    private static async Task<IndexingHarness> StartCoreAsync(
+        IInterceptor? watcher, ILoggerProvider? logs, string[] sourceRoots)
     {
         if (sourceRoots.Length == 0) sourceRoots = ["notes"];
 
@@ -104,7 +116,10 @@ internal sealed class IndexingHarness : IAsyncDisposable
         // and so its own connection. An in-memory database is per-connection, so the
         // extraction cache would write into a catalogue nothing else can see.
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddLogging(b =>
+        {
+            if (logs is not null) b.AddProvider(logs);
+        });
         services.AddSingleton(options);
         // The same interceptor the app registers, and for the reason this harness exists:
         // the reader opens a connection per file on several threads, and SQLite's default
