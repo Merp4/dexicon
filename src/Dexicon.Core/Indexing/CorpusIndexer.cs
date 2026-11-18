@@ -217,7 +217,8 @@ public sealed class CorpusIndexer(
     public async Task<IndexJob> RunAsync(string jobId, IProgress<IndexProgress>? progress, CancellationToken ct)
     {
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
-        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets)
+        // Split into one query per collection: a single join repeats every source for each chunk set.
+        var corpus = await db.Corpora.Include(c => c.Sources).Include(c => c.ChunkSets).AsSplitQuery()
             .FirstAsync(c => c.Id == job.CorpusId, ct);
 
         // A job either targets one set, which is how a replacement is backfilled while
