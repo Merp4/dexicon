@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { accepted, advisories, check } from './npm-audit-gate.mjs';
 
 const PICOMATCH = 'GHSA-fc5q-39xc-vjpf';
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 const advisory = (id, name, severity) => ({
   source: 1,
@@ -14,12 +20,16 @@ const advisory = (id, name, severity) => ({
   range: '*',
 });
 
-/** A version 2 report with one vulnerable package per advisory, and the derived package that depends on the first. */
+/**
+ * A version 2 report with one vulnerable package per package name, holding every advisory given
+ * for it, and the derived package that depends on the first.
+ */
 const report = (...found) => {
   const vulnerabilities = {};
   const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };
   for (const a of found) {
-    vulnerabilities[a.name] = { name: a.name, severity: a.severity, via: [a] };
+    vulnerabilities[a.name] ??= { name: a.name, severity: a.severity, via: [] };
+    vulnerabilities[a.name].via.push(a);
     counts[a.severity] += 1;
   }
   if (found.length > 0) {
@@ -94,10 +104,119 @@ test('a report that counts high findings but names no advisory throws', () => {
   assert.throws(() => check(unreadable), /names no advisory/);
 });
 
+test('one advisory reported for the accepted package and for another package fails for the other, in either order', () => {
+  for (const names of [['other', 'picomatch'], ['picomatch', 'other']]) {
+    const result = check(report(...names.map((name) => advisory(PICOMATCH, name, 'high'))));
+    assert.deepEqual(result.rejected.map((a) => a.package), ['other'], names.join());
+    assert.deepEqual(result.tolerated.map((a) => a.package), ['picomatch'], names.join());
+  }
+});
+
+test('a package rated high that leads to no advisory throws, next to the accepted advisory too', () => {
+  const r = report(advisory(PICOMATCH, 'picomatch', 'high'));
+  r.vulnerabilities.mystery = { name: 'mystery', severity: 'critical', via: [] };
+  assert.throws(() => check(r), /mystery is rated critical and names no advisory/);
+
+  r.vulnerabilities.mystery = { name: 'mystery', severity: 'critical', via: ['nowhere'] };
+  assert.throws(() => check(r), /mystery is rated critical and names no advisory/);
+});
+
+test('another advisory for the accepted package fails', () => {
+  const result = check(report(advisory(PICOMATCH, 'picomatch', 'high'), advisory('GHSA-aaaa-bbbb-cccc', 'picomatch', 'high')));
+  assert.deepEqual(result.rejected.map((a) => a.id), ['GHSA-aaaa-bbbb-cccc']);
+  assert.deepEqual(result.tolerated.map((a) => a.id), [PICOMATCH]);
+});
+
+test('a report that counts high or critical findings but lists no package throws', () => {
+  for (const counts of [{ high: 3, critical: 0 }, { high: 0, critical: 2 }]) {
+    const empty = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: counts } };
+    assert.throws(() => check(empty), /names no advisory/, JSON.stringify(counts));
+  }
+});
+
+test('a dependency cycle among packages with no advisory ends and throws', () => {
+  const cycle = {
+    auditReportVersion: 2,
+    vulnerabilities: {
+      a: { name: 'a', severity: 'high', via: ['b'] },
+      b: { name: 'b', severity: 'high', via: ['a'] },
+    },
+    metadata: { vulnerabilities: { high: 2, critical: 0 } },
+  };
+  assert.throws(() => check(cycle), /names no advisory/);
+});
+
+test('a severity that npm does not report throws', () => {
+  for (const severity of ['severe', 'High', 'HIGH', undefined]) {
+    assert.throws(
+      () => check(report(advisory('GHSA-aaaa-bbbb-cccc', 'left-pad', severity))), /severity/, String(severity));
+  }
+});
+
 test('every accepted entry names its package, a reason and the condition that removes it', () => {
   for (const [id, entry] of accepted) {
     assert.match(id, /^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/);
     assert.ok(entry.package);
     assert.match(entry.reason, /Remove this entry once/);
   }
+});
+
+/** Runs the gate as CI does, on a report file, and returns its exit code and output. */
+const runGate = (t, text, script = join(SCRIPT_DIR, 'npm-audit-gate.mjs')) => {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-gate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'audit.json');
+  writeFileSync(file, text);
+  const run = spawnSync(process.execPath, [script, file], { encoding: 'utf8' });
+  return { code: run.status, out: run.stdout + run.stderr };
+};
+
+const jsonOf = (r) => JSON.stringify(r);
+
+test('the command exits 0 for the accepted advisory alone and shows it as a warning', (t) => {
+  const run = runGate(t, jsonOf(report(advisory(PICOMATCH, 'picomatch', 'high'))));
+  assert.equal(run.code, 0, run.out);
+  assert.match(run.out, /::warning::.*GHSA-fc5q-39xc-vjpf/);
+});
+
+test('the command exits 0 for a clean report', (t) => {
+  const run = runGate(t, jsonOf({ auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: {} } }));
+  assert.equal(run.code, 0, run.out);
+});
+
+test('the command exits 1 and names an advisory that is not accepted', (t) => {
+  const run = runGate(t, jsonOf(report(
+    advisory(PICOMATCH, 'picomatch', 'high'), advisory('GHSA-aaaa-bbbb-cccc', 'left-pad', 'critical'))));
+  assert.equal(run.code, 1, run.out);
+  assert.match(run.out, /::error::.*GHSA-aaaa-bbbb-cccc/);
+});
+
+test('the command exits 1 for output it cannot read', (t) => {
+  for (const text of ['', '{', 'null', '{"error":{"code":"ENOAUDIT"}}', '{"auditReportVersion":1,"vulnerabilities":{}}']) {
+    const run = runGate(t, text);
+    assert.equal(run.code, 1, `${text}\n${run.out}`);
+    assert.match(run.out, /::error::/, text);
+  }
+});
+
+test('the command exits 2 when no file is named', () => {
+  const run = spawnSync(process.execPath, [join(SCRIPT_DIR, 'npm-audit-gate.mjs')], { encoding: 'utf8' });
+  assert.equal(run.status, 2);
+});
+
+test('the command still runs when it is started through a symbolic link', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-gate-link-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const link = join(dir, 'scripts');
+  try {
+    // The junction type needs no privilege on Windows and is ignored elsewhere.
+    symlinkSync(SCRIPT_DIR, link, 'junction');
+  } catch (error) {
+    t.skip(`cannot create a link here: ${error.code}`);
+    return;
+  }
+
+  const run = runGate(t, '{"error":{"code":"ENOAUDIT"}}', join(link, 'npm-audit-gate.mjs'));
+  assert.equal(run.code, 1, run.out);
+  assert.match(run.out, /::error::/);
 });

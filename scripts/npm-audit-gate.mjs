@@ -8,8 +8,8 @@
 // with no exceptions (`npm audit --omit=dev`), which keeps an entry below limited to a
 // package that ships nothing.
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
 
+const severities = new Set(['info', 'low', 'moderate', 'high', 'critical']);
 const failing = new Set(['high', 'critical']);
 
 /**
@@ -30,22 +30,31 @@ export const accepted = new Map([
   ],
 ]);
 
-/** The high and critical advisories in an `npm audit --json` report, one per advisory URL. */
+/**
+ * The high and critical advisories in an `npm audit --json` report, one per package and advisory
+ * URL. Throws when the report is not one this function can read completely.
+ */
 export function advisories(report) {
   if (report === null || typeof report !== 'object' || report.error) {
     const detail = report?.error ? `: ${JSON.stringify(report.error)}` : '';
     throw new Error(`The input is not an npm audit report${detail}`);
   }
-  if (report.auditReportVersion !== 2 || typeof report.vulnerabilities !== 'object' || report.vulnerabilities === null) {
+  const nodes = report.vulnerabilities;
+  if (report.auditReportVersion !== 2 || typeof nodes !== 'object' || nodes === null) {
     throw new Error('The input is not an npm audit report of version 2');
   }
 
   const found = new Map();
-  for (const node of Object.values(report.vulnerabilities)) {
+  for (const node of Object.values(nodes)) {
     for (const via of node.via ?? []) {
       // A string names another vulnerable package; an object is the advisory itself.
-      if (typeof via !== 'object' || !failing.has(via.severity)) continue;
-      found.set(via.url, {
+      if (typeof via !== 'object') continue;
+      if (!severities.has(via.severity)) {
+        throw new Error(`Advisory ${via.url} has the severity ${JSON.stringify(via.severity)}, which is not one npm reports`);
+      }
+      if (!failing.has(via.severity)) continue;
+      // The package is part of the key because one advisory can cover several packages.
+      found.set(`${via.name} ${via.url}`, {
         id: String(via.url).split('/').pop(),
         package: via.name,
         severity: via.severity,
@@ -55,8 +64,21 @@ export function advisories(report) {
     }
   }
 
-  // A report that counts high or critical findings and yields no advisory has changed shape.
-  // Passing it would turn an unreadable report into a clean one.
+  // A package rated high or critical has to lead to an advisory this function read, directly or
+  // through the packages it depends on. One that does not means the report has a shape it did not
+  // read, and passing it would turn an unreadable report into a clean one.
+  const leadsToAdvisory = (name, seen = new Set()) => {
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return (nodes[name]?.via ?? []).some((via) =>
+      typeof via === 'object' ? failing.has(via.severity) : leadsToAdvisory(via, seen));
+  };
+  for (const [name, node] of Object.entries(nodes)) {
+    if (failing.has(node.severity) && !leadsToAdvisory(name)) {
+      throw new Error(`The package ${name} is rated ${node.severity} and names no advisory`);
+    }
+  }
+
   const counts = report.metadata?.vulnerabilities ?? {};
   const counted = (counts.high ?? 0) + (counts.critical ?? 0);
   if (counted > 0 && found.size === 0) {
@@ -98,11 +120,13 @@ function main(path) {
     console.log(`::error::npm audit gate: ${a.id} (${a.package}, ${a.severity}): ${a.title} ${a.url}`);
 
   console.log(
-    `npm audit gate: ${result.rejected.length} rejected, ${result.tolerated.length} accepted ` +
-      'advisories of high or critical severity.');
+    `npm audit gate: advisories of high or critical severity: ${result.rejected.length} rejected, ` +
+      `${result.tolerated.length} accepted.`);
   return result.rejected.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// `import.meta.main` is true when this file is the entry point, including when it is started
+// through a symbolic link, and false when the tests import it.
+if (import.meta.main) {
   process.exitCode = main(process.argv[2]);
 }
