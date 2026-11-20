@@ -315,6 +315,51 @@ public sealed class ConfigImportTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnErrorThatIsNotARuleIsReportedAsFailedAndTheNextCorpusIsStillMade()
+    {
+        var calls = 0;
+        _harness.Vectors.OnEnsureCollection = () =>
+        {
+            if (calls++ == 0) throw new IOException("the vector store is away");
+        };
+
+        var result = await RunAsync(File(Corpus("First", [Source("notes")]), Corpus("Second")), apply: true);
+
+        Outcomes(result, "corpus").ShouldBe("First=failed,Second=create");
+        result.Items.Single(i => i.Outcome == "failed").Detail.ShouldNotBeNull().ShouldContain("An error stopped this corpus");
+        Outcomes(result, "source").ShouldBe("", "the sources of a corpus that failed are not tried");
+        await using var db = _harness.NewContext();
+        (await db.Corpora.AnyAsync(c => c.Name == "Second", TestContext.Current.CancellationToken)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AHistorySourceAndAFileSourceOverOneFolderAreTwoSources()
+    {
+        await RunAsync(File(Corpus("Papers", [Source("notes")])), apply: true);
+
+        var result = await RunAsync(File(Corpus("Papers",
+            [Source("notes"), Source("notes", kind: "githistory", git: new GitHistoryOptions { Ref = "main" })])), apply: true);
+
+        Outcomes(result, "source").ShouldBe("Papers: workspace notes=unchanged,Papers: githistory notes=refused",
+            "the history source is not taken for the file source on the same folder");
+    }
+
+    [Theory]
+    [InlineData("Notes")]
+    [InlineData("notes/")]
+    [InlineData("/notes")]
+    [InlineData("NOTES\\")]
+    public async Task ASourceRootIsMatchedIgnoringCaseAndSlashes(string root)
+    {
+        await RunAsync(File(Corpus("Papers", [Source("notes")])), apply: true);
+
+        var result = await RunAsync(File(Corpus("Papers", [Source(root)])), apply: true);
+
+        result.Items.Single(i => i.Kind == "source").Outcome.ShouldBe("unchanged");
+        (await StoredAsync("Papers")).Sources.Count.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task AnEmbeddingServiceThatIsAwayRefusesTheCorpusWithItsReasonAndMakesNothing()
     {
         _harness.Embedder = new EmbedderThatIsAway();
