@@ -347,7 +347,7 @@ public sealed class SearchLogOptions
     /// </summary>
     public bool StoreQueryText { get; init; } = true;
 
-    /// <summary>Days a row is kept, counted from the search. 0 keeps every row, and the table then grows without bound.</summary>
+    /// <summary>Days a row is kept, counted from the search. 0, or a negative number, keeps every row, and the table then grows without bound.</summary>
     public int RetentionDays { get; init; } = 30;
 }
 

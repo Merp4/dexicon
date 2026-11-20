@@ -68,10 +68,23 @@ public sealed class SearchLog(IOptions<DexiconOptions> options) : ISearchLog
         if (!settings.Enabled) return;
 
         row.Query = settings.StoreQueryText ? Cut(row.Query, MaxQueryChars) : null;
-        row.Corpora = Cut(row.Corpora, MaxCorporaChars) ?? string.Empty;
+        row.Corpora = CutList(row.Corpora, MaxCorporaChars);
 
         // Wait mode with TryWrite refuses when full instead of blocking, which is the drop.
         if (!_queue.Writer.TryWrite(row)) CountDropped(1);
+    }
+
+    /// <summary>
+    /// A comma separated list cut at a whole name when it is longer than <paramref name="max"/>, with <c>,…</c> at the
+    /// end to say names are missing. A cut in the middle of a name would read as a corpus that does not exist.
+    /// </summary>
+    internal static string CutList(string list, int max)
+    {
+        if (list.Length <= max) return list;
+
+        var room = max - 2;
+        var comma = list.LastIndexOf(',', room);
+        return comma > 0 ? list[..comma] + ",…" : (Cut(list, max - 1) ?? string.Empty) + "…";
     }
 
     /// <summary>The text cut at <paramref name="max"/> characters, never between the halves of a surrogate pair.</summary>

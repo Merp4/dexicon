@@ -31,14 +31,18 @@ public static class SearchLogEndpoints
     {
         if (rc.RequireScope(Scopes.Admin) is { } denied) return denied;
 
+        // By name only. Enum.TryParse also takes a number or a comma list ("1,2" is 3), which would filter on a surface
+        // the caller did not name while the error message says only names are accepted.
         SearchSurface? onlySurface = null;
         if (!string.IsNullOrWhiteSpace(surface))
         {
-            if (!Enum.TryParse<SearchSurface>(surface, ignoreCase: true, out var parsed) || !Enum.IsDefined(parsed))
+            var names = Enum.GetNames<SearchSurface>();
+            var match = names.FirstOrDefault(n => string.Equals(n, surface.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (match is null)
                 return Results.Problem(title: "Unknown surface",
-                    detail: $"Expected {string.Join(", ", Enum.GetNames<SearchSurface>().Select(n => n.ToLowerInvariant()))}.",
+                    detail: $"Expected {string.Join(", ", names.Select(n => n.ToLowerInvariant()))}.",
                     statusCode: 400);
-            onlySurface = parsed;
+            onlySurface = Enum.Parse<SearchSurface>(match);
         }
 
         var matching = db.SearchLog.AsNoTracking().AsQueryable();

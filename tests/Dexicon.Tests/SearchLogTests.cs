@@ -22,6 +22,8 @@ public sealed class SearchLogTests : IAsyncLifetime
 {
     private static readonly Principal Agent = new("k", "agent", new HashSet<string>(StringComparer.Ordinal) { Scopes.Search });
 
+    private const int SearchPause = 50;
+
     private readonly List<ServiceProvider> _providers = [];
     private IndexingHarness _harness = null!;
 
@@ -29,7 +31,13 @@ public sealed class SearchLogTests : IAsyncLifetime
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await _harness.SeedCorpusAsync(SourceKind.Workspace);
-        _harness.Vectors.OnSearch = q => new SearchResponse { Mode = q.Mode, Hits = [Hit(0.5f)] };
+        // Two hits, the better one first as the store returns them, and a pause that gives the time taken a floor
+        // the machine cannot lower.
+        _harness.Vectors.OnSearch = q =>
+        {
+            Thread.Sleep(SearchPause);
+            return new SearchResponse { Mode = q.Mode, Hits = [Hit(0.9f), Hit(0.4f, "b.md")] };
+        };
     }
 
     public async ValueTask DisposeAsync()
@@ -38,11 +46,11 @@ public sealed class SearchLogTests : IAsyncLifetime
         await _harness.DisposeAsync();
     }
 
-    private static SearchHit Hit(float score) => new()
+    private static SearchHit Hit(float score, string file = "a.md") => new()
     {
         CorpusId = IndexingHarness.CorpusId,
         SourceId = IndexingHarness.SourceIdFor(0),
-        FilePath = "a.md",
+        FilePath = file,
         StartLine = 1,
         EndLine = 1,
         Content = "alpha",
@@ -68,7 +76,10 @@ public sealed class SearchLogTests : IAsyncLifetime
 
     private SearchLogWriter WriterFor(SearchLog log, IOptions<DexiconOptions> settings, TimeProvider? clock = null,
         IServiceScopeFactory? scopes = null) =>
-        new(log, scopes ?? ScopesOverTheCatalogue(), settings, clock ?? TimeProvider.System, NullLogger<SearchLogWriter>.Instance);
+        new(log, scopes ?? ScopesOverTheCatalogue(), settings, clock ?? TimeProvider.System, NullLogger<SearchLogWriter>.Instance)
+        {
+            RetryDelay = TimeSpan.Zero,
+        };
 
     private SearchService ServiceWith(ISearchLog log, IEmbeddingService? embedder = null)
     {
@@ -108,10 +119,39 @@ public sealed class SearchLogTests : IAsyncLifetime
         row.Mode.ShouldBe("keyword");
         row.Query.ShouldBe("alpha beta");
         row.QueryChars.ShouldBe(10);
-        row.Hits.ShouldBe(1);
-        row.TopScore.ShouldBe(0.5f);
+        row.Hits.ShouldBe(2);
+        row.TopScore.ShouldBe(0.9f, "the first hit's, not the last");
+        row.TookMs.ShouldBeGreaterThanOrEqualTo(SearchPause - 5, "the time the store took");
         row.Degraded.ShouldBeFalse();
+        row.Noted.ShouldBeFalse();
         row.AtUtc.ShouldBeInRange(before.AddSeconds(-1), DateTime.UtcNow.AddSeconds(1));
+    }
+
+    [Theory]
+    [InlineData(SearchMode.Hybrid, "hybrid")]
+    [InlineData(SearchMode.Semantic, "semantic")]
+    [InlineData(SearchMode.Keyword, "keyword")]
+    public async Task ASearchRecordsTheModeThatRan(SearchMode asked, string recorded)
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+
+        await ServiceWith(log).SearchAsync(Agent, Ask(mode: asked), TestContext.Current.CancellationToken);
+
+        (await FlushAsync(log, WriterFor(log, settings))).ShouldHaveSingleItem().Mode.ShouldBe(recorded);
+    }
+
+    [Fact]
+    public async Task AResultThatCarriesANoteIsRecordedAsNoted()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        await using (var db = _harness.NewContext())
+            await db.ChunkSets.ExecuteUpdateAsync(u => u.SetProperty(s => s.State, CorpusState.Unavailable), TestContext.Current.CancellationToken);
+
+        await ServiceWith(log).SearchAsync(Agent, Ask(), TestContext.Current.CancellationToken);
+
+        (await FlushAsync(log, WriterFor(log, settings))).ShouldHaveSingleItem().Noted.ShouldBeTrue();
     }
 
     [Fact]
@@ -217,7 +257,7 @@ public sealed class SearchLogTests : IAsyncLifetime
         var row = (await FlushAsync(log, WriterFor(log, settings))).ShouldHaveSingleItem();
         row.Query.ShouldBeNull();
         row.QueryChars.ShouldBe(16);
-        row.Hits.ShouldBe(1);
+        row.Hits.ShouldBe(2);
     }
 
     [Fact]
@@ -259,6 +299,85 @@ public sealed class SearchLogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ABatchRefusedOnceIsWrittenOnTheRetry()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        var scopes = new FlakyScopes(ScopesOverTheCatalogue(), refusals: 1);
+        var writer = WriterFor(log, settings, scopes: scopes);
+        await ServiceWith(log).SearchAsync(Agent, Ask(), TestContext.Current.CancellationToken);
+
+        (await FlushAsync(log, writer)).ShouldHaveSingleItem();
+
+        scopes.Attempts.ShouldBe(2, "the first attempt was refused and the second wrote it");
+        log.Dropped.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ABatchRefusedTwiceIsDroppedAfterExactlyTwoAttempts()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        var scopes = new FlakyScopes(ScopesOverTheCatalogue(), refusals: 5);
+        var writer = WriterFor(log, settings, scopes: scopes);
+
+        await writer.WriteAsync([new SearchLogRow { TokenId = "k", TokenName = "agent", Corpora = "notes", Mode = "keyword" }],
+            TestContext.Current.CancellationToken);
+
+        scopes.Attempts.ShouldBe(2);
+        log.Dropped.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AQueryWithALoneSurrogateAndANulIsWrittenAndReadBack()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+
+        await ServiceWith(log).SearchAsync(Agent, Ask("\ud800 a\0b"), TestContext.Current.CancellationToken);
+
+        var row = (await FlushAsync(log, WriterFor(log, settings))).ShouldHaveSingleItem();
+        row.Hits.ShouldBe(2, "the row was kept whole whatever the text held");
+        row.QueryChars.ShouldBe(5);
+    }
+
+    [Fact]
+    public void ACorpusListThatIsTooLongIsCutAtAWholeNameAndSaysSo()
+    {
+        var names = string.Join(",", Enumerable.Range(0, 80).Select(i => $"corpus-number-{i:00}"));
+
+        var cut = SearchLog.CutList(names, SearchLog.MaxCorporaChars);
+
+        cut.Length.ShouldBeLessThanOrEqualTo(SearchLog.MaxCorporaChars);
+        cut.ShouldEndWith(",…");
+        cut[..^2].Split(',').ShouldAllBe(n => n.StartsWith("corpus-number-", StringComparison.Ordinal) && n.Length == 16,
+            "every name that is kept is whole");
+        SearchLog.CutList("books,docs", SearchLog.MaxCorporaChars).ShouldBe("books,docs");
+    }
+
+    [Fact]
+    public void ASingleNameLongerThanTheLimitIsCutAndMarked()
+    {
+        var cut = SearchLog.CutList(new string('a', 600), SearchLog.MaxCorporaChars);
+
+        cut.Length.ShouldBe(SearchLog.MaxCorporaChars);
+        cut.ShouldEndWith("…");
+    }
+
+    [Fact]
+    public async Task ARetentionLongerThanADateCanHoldIsClampedAndStillPrunes()
+    {
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var settings = Settings(days: int.MaxValue);
+        var log = new SearchLog(settings);
+        await SeedAsync(new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc), now.UtcDateTime.AddDays(-1));
+
+        var removed = await WriterFor(log, settings, new FixedClock(now)).PruneAsync(TestContext.Current.CancellationToken);
+
+        removed.ShouldBe(1, "the cut-off is 36,500 days back, and a row from 1900 is older than that");
+    }
+
+    [Fact]
     public async Task RowsPastRetentionAreRemovedAndTheRestStay()
     {
         var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
@@ -272,6 +391,67 @@ public sealed class SearchLogTests : IAsyncLifetime
         await using var db = _harness.NewContext();
         (await db.SearchLog.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(2);
         (await db.SearchLog.AnyAsync(r => r.AtUtc < now.UtcDateTime.AddDays(-30), TestContext.Current.CancellationToken)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ARowExactlyAtTheCutOffStays()
+    {
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var settings = Settings(days: 30);
+        var log = new SearchLog(settings);
+        await SeedAsync(now.UtcDateTime.AddDays(-30), now.UtcDateTime.AddDays(-30).AddSeconds(-1));
+
+        (await WriterFor(log, settings, new FixedClock(now)).PruneAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
+
+        await using var db = _harness.NewContext();
+        (await db.SearchLog.AsNoTracking().Select(r => r.AtUtc).SingleAsync(TestContext.Current.CancellationToken))
+            .ShouldBe(now.UtcDateTime.AddDays(-30), "the row a second older than the window went, and the one at its edge stayed");
+    }
+
+    [Fact]
+    public async Task ALongCorporaListIsCutWhenItIsRecorded()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        var names = string.Join(",", Enumerable.Range(0, 80).Select(i => $"corpus-number-{i:00}"));
+
+        log.Record(new SearchLogRow { TokenId = "k", TokenName = "agent", Corpora = names, Mode = "keyword" });
+
+        var row = (await FlushAsync(log, WriterFor(log, settings))).ShouldHaveSingleItem();
+        row.Corpora.Length.ShouldBeLessThanOrEqualTo(SearchLog.MaxCorporaChars);
+        row.Corpora.ShouldEndWith(",…");
+    }
+
+    [Fact]
+    public async Task TheHostedWriterPrunesAtStartAndWritesWhatIsQueued()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var settings = Settings(days: 30);
+        var log = new SearchLog(settings);
+        await SeedAsync(now.UtcDateTime.AddDays(-45), now.UtcDateTime.AddDays(-2));
+        var writer = WriterFor(log, settings, new FixedClock(now));
+
+        await writer.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            for (var i = 0; i < 250; i++)
+                log.Record(new SearchLogRow { TokenId = "k", TokenName = "agent", Corpora = "notes", Mode = "keyword", AtUtc = now.UtcDateTime });
+
+            // 250 written and the 45 day old row gone, leaving the 2 day old one: 251. Waited for, not slept for.
+            var rows = 0;
+            for (var attempt = 0; attempt < 100 && rows != 251; attempt++)
+            {
+                await using var db = _harness.NewContext();
+                rows = await db.SearchLog.CountAsync(TestContext.Current.CancellationToken);
+                if (rows != 251) await Task.Delay(100, TestContext.Current.CancellationToken);
+            }
+
+            rows.ShouldBe(251);
+        }
+        finally
+        {
+            await writer.StopAsync(CancellationToken.None);
+        }
     }
 
     [Fact]
@@ -299,6 +479,18 @@ public sealed class SearchLogTests : IAsyncLifetime
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    /// <summary>Refuses the first <paramref name="refusals"/> attempts to open the catalogue, then hands out real scopes.</summary>
+    private sealed class FlakyScopes(IServiceScopeFactory inner, int refusals) : IServiceScopeFactory
+    {
+        public int Attempts { get; private set; }
+
+        public IServiceScope CreateScope()
+        {
+            Attempts++;
+            return Attempts <= refusals ? throw new InvalidOperationException("the catalogue is locked") : inner.CreateScope();
+        }
     }
 
     /// <summary>A catalogue that cannot be opened: the case the writer has to survive.</summary>

@@ -17,6 +17,7 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 |---|---|
 | **Key** | An agent's credential. Carries one or more of `search`, `ingest`, `configure`, `propose` and `destroy`, never `admin`, and maps to the corpora it may reach. |
 | **Proposal** | A removal an agent asked for and a person has yet to decide, or the record of how it was decided. Holds no foreign keys, so it outlives what it names. |
+| **Search log row** | One search that ran: who asked, by which surface, what, and how it went. Holds query text for the retention period ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record), [10](10-security-secrets.md#what-the-search-log-holds)). No foreign keys. |
 | **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, a `githistory` repository under a mount (its commits), or `upload` (files pushed through the UI/API). A corpus has one or more. |
@@ -386,6 +387,28 @@ CREATE TABLE proposals (
 CREATE INDEX ix_proposals_status ON proposals(status, created_utc);
 CREATE INDEX ix_proposals_token ON proposals(token_id, status);
 CREATE INDEX ix_proposals_target ON proposals(kind, target_id, status);
+
+-- One row for each search that ran (D-52). NO FOREIGN KEYS, as for proposals: the key and the
+-- corpora are copied in by the names they had then. Written off the request path by SearchLogWriter and
+-- deleted after DEXICON__SEARCHLOG__RETENTIONDAYS days.
+CREATE TABLE search_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- arrival order; what a page of the list continues from
+  at_utc      TEXT NOT NULL,
+  token_id    TEXT NOT NULL,
+  token_name  TEXT NOT NULL,                      -- "admin" for a search made from the UI
+  surface     TEXT NOT NULL,                      -- Mcp | Api | Context | Other (a caller that did not say)
+  corpora     TEXT NOT NULL,                      -- comma separated, `books` or `books:fine`; cut at 500 characters at a name, ending ,…
+  mode        TEXT NOT NULL,                      -- the mode that ran: keyword when embeddings were unavailable
+  query       TEXT,                               -- cut at 500 characters; NULL when STOREQUERYTEXT is off
+  query_chars INTEGER NOT NULL,                   -- the whole query's length
+  hits        INTEGER NOT NULL,
+  top_score   REAL,                               -- the first hit's score, in the units of `mode`; NULL with no hits
+  took_ms     INTEGER NOT NULL,
+  degraded    INTEGER NOT NULL,
+  noted       INTEGER NOT NULL                    -- the result carried a note
+);
+CREATE INDEX ix_search_log_at ON search_log(at_utc);
+CREATE INDEX ix_search_log_hits ON search_log(hits, id);
 ```
 
 `chunk_count` on `file_chunk_states` is written by the indexer **and read back** by the corpus detail

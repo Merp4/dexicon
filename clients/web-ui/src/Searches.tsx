@@ -15,7 +15,7 @@ import { count } from './lib/units';
  * it keeps the text at all.
  */
 
-type Which = 'all' | 'nothing';
+export type Which = 'all' | 'nothing';
 
 const SURFACES = ['mcp', 'api', 'context', 'other'] as const;
 const ANY = 'any';
@@ -28,6 +28,17 @@ const SURFACE_LABEL: Record<string, string> = {
 };
 
 const PAGE = 50;
+
+/** What a request for a page carries: only the filters that are set, so an unset one asks for no narrowing. */
+export function queryFor(which: Which, surface: string, text: { key: string; corpus: string }) {
+  return {
+    limit: PAGE,
+    ...(which === 'nothing' ? { noResults: true } : {}),
+    ...(surface !== ANY ? { surface } : {}),
+    ...(text.key ? { key: text.key } : {}),
+    ...(text.corpus ? { corpus: text.corpus } : {}),
+  };
+}
 
 /** The text the server kept, or what it kept instead when it kept none. */
 export function whatWasAsked(item: Pick<SearchLogItem, 'query' | 'queryChars'>): string {
@@ -56,13 +67,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [reload, setReload] = useState(0);
 
-  const filters = useCallback(() => ({
-    limit: PAGE,
-    ...(which === 'nothing' ? { noResults: true } : {}),
-    ...(surface !== ANY ? { surface } : {}),
-    ...(text.key ? { key: text.key } : {}),
-    ...(text.corpus ? { corpus: text.corpus } : {}),
-  }), [which, surface, text]);
+  const filters = useCallback(() => queryFor(which, surface, text), [which, surface, text]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,8 +123,8 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
 
       {settings && !settings.enabled && (
         <Notice tone="warn">
-          The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>). Nothing new is recorded;
-          the rows below are older ones that retention has not yet removed.
+          The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>). Nothing new is recorded.
+          Rows already written stay until retention removes them, which it never does when retention is 0 days.
         </Notice>
       )}
       {settings?.enabled && (
@@ -214,8 +219,8 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
                     <td className="px-3 py-2">
                       <Badge tone={r.surface === 'Other' ? 'warn' : 'neutral'}>{SURFACE_LABEL[r.surface] ?? r.surface}</Badge>
                     </td>
-                    <td className="px-3 py-2 break-words">{r.corpora}</td>
-                    <td className="max-w-[34ch] px-3 py-2 break-words">
+                    <td className="px-3 py-2 [overflow-wrap:anywhere]">{r.corpora}</td>
+                    <td className="max-w-[34ch] px-3 py-2 [overflow-wrap:anywhere]">
                       <span className={r.query == null ? 'text-muted-foreground' : undefined}>{whatWasAsked(r)}</span>
                     </td>
                     <td className="px-3 py-2 text-right">

@@ -3034,7 +3034,7 @@ reader's output loses messages, which the sniff would not report.
 
 ### D-52 Every search that ran is recorded, and an administrator can read the record
 
-**Status.** Accepted and implemented, 2026-11-20. Not yet released.
+**Status.** Accepted and implemented, 2026-11-20 (#355). Not yet released.
 
 **Decision.** `SearchService.SearchAsync` writes one row to a `search_log` table for each search that returns a result: the
 key, the surface the search came in by (`mcp`, `api` or `context`), the corpora, the mode that ran, the query, the number of
@@ -3052,21 +3052,25 @@ first, pages by row id, and filters by key, corpus, surface and "found nothing" 
 
 **Why.** Nothing recorded what agents asked or whether the index could answer. A query that returns nothing leaves no trace
 on the server, so a folder that was never indexed and the behaviour of the per-prompt hook on real prompts could only be
-guessed. A measurement of 2026-11-19 on the `docs` corpus, with 55 committed queries against 80 prompts taken from other
-projects' sessions, found no single similarity threshold that separated the two groups (area under the ROC curve 0.68 for
-the top cosine, 0.81 for the gap between the first and fifth hit), so whether the index can abstain on a prompt is a
-question for real traffic, which this table collects.
+guessed. A one-off measurement of 2026-11-19 on the `docs` corpus, comparing the committed queries with prompts from other
+projects' sessions, found no single similarity threshold that separated the two groups, so whether the index can abstain
+on a prompt is a question for real traffic, which this table collects. That measurement is not yet a committed script, and
+its figures are left out until it is.
 
 **What it holds.** The query as it ran (for a phrase-only search, the phrase), cut at 500 characters, with its full length.
-The context hook sends each prompt in full, so rows hold prompts and anything typed into one. The catalogue and every backup
+The context hook, once installed (it is opt-in), sends each prompt it handles in full, so rows hold prompts and anything
+typed into one. Queries an agent sends over MCP are stored whether or not the hook is installed. The catalogue and every backup
 of it carry them for the retention period ([10](10-security-secrets.md#what-the-search-log-holds)). The score is in the
 units of the mode that ran, a cosine for `semantic`, the fused value for `hybrid`, so it is compared within a mode. The key
 and the corpora are stored by the names they had then, with no foreign key, so a row outlives both.
 
 **Consequences.**
 
-- Migration `SearchesAreRecorded` adds the table and two indexes, and its down path drops the table. Rehearsed on a copy of
-  the 2026-11-15 backup catalogue (604 MB): applied at host start, then down and up again with `dotnet ef database update`.
+- Migration `SearchesAreRecorded` adds the table and two indexes, and its down path drops the table. Rehearsed by hand on a
+  copy of the 2026-11-15 backup catalogue (604 MB): applied at host start, then down and up again with
+  `dotnet ef database update`. No script in the repository repeats it.
+- Rolling back to an image without this change leaves the table, its rows and the migration history row in the catalogue.
+  The older image ignores them and starts, and the rows keep their query text until they are deleted by hand.
 - A write competes with indexing for the catalogue's single writer. One reader drains the channel (capacity 1,000), a
   locked catalogue costs the rows of the batch in flight after the 30 s busy timeout, and rows still queued when the host
   stops are lost. `GET /api/searches` and the screen report the number dropped since start.

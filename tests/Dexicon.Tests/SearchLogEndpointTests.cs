@@ -26,21 +26,21 @@ namespace Dexicon.Tests;
 /// </summary>
 public sealed class SearchLogEndpointTests : IAsyncLifetime
 {
+    private static readonly DateTime At = new(2026, 11, 20, 9, 0, 0, DateTimeKind.Utc);
+
     private IndexingHarness _harness = null!;
 
     public async ValueTask InitializeAsync()
     {
         _harness = await IndexingHarness.StartAsync("notes");
         await using var db = _harness.NewContext();
-        var at = new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Utc);
-
-        // Ids 1 to 6, in arrival order: three found nothing.
-        Row(db, at, "agent", SearchSurface.Mcp, "books", hits: 3);
-        Row(db, at, "agent", SearchSurface.Mcp, "books", hits: 0);
-        Row(db, at, "hook", SearchSurface.Context, "docs", hits: 1);
-        Row(db, at, "hook", SearchSurface.Context, "docs", hits: 0);
-        Row(db, at, "script", SearchSurface.Api, "books,docs", hits: 2);
-        Row(db, at, "agent", SearchSurface.Mcp, "docs", hits: 0);
+        // Ids 1 to 6, in arrival order and a minute apart: three found nothing.
+        Row(db, At.AddMinutes(0), "agent", SearchSurface.Mcp, "books", hits: 3);
+        Row(db, At.AddMinutes(1), "agent", SearchSurface.Mcp, "books", hits: 0);
+        Row(db, At.AddMinutes(2), "hook", SearchSurface.Context, "docs", hits: 1);
+        Row(db, At.AddMinutes(3), "hook", SearchSurface.Context, "docs", hits: 0);
+        Row(db, At.AddMinutes(4), "script", SearchSurface.Api, "books,docs", hits: 2);
+        Row(db, At.AddMinutes(5), "agent", SearchSurface.Mcp, "docs", hits: 0);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
@@ -66,17 +66,19 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
     };
 
     private async Task<IResult> ListAsync(RequestContext rc, int? limit = null, long? before = null, string? key = null,
-        string? corpus = null, string? surface = null, bool? noResults = null, SearchLogOptions? settings = null)
+        string? corpus = null, string? surface = null, bool? noResults = null, SearchLogOptions? settings = null,
+        SearchLog? logged = null)
     {
         await using var db = _harness.NewContext();
-        var log = new SearchLog(Options.Create(new DexiconOptions()));
+        var log = logged ?? new SearchLog(Options.Create(new DexiconOptions()));
         return await SearchLogEndpoints.ListAsync(limit, before, key, corpus, surface, noResults, rc, db, log,
             Options.Create(new DexiconOptions { SearchLog = settings ?? new SearchLogOptions() }), TestContext.Current.CancellationToken);
     }
 
     private async Task<SearchLogPage> PageAsync(int? limit = null, long? before = null, string? key = null,
-        string? corpus = null, string? surface = null, bool? noResults = null, SearchLogOptions? settings = null) =>
-        ((Ok<SearchLogPage>)await ListAsync(Admin(), limit, before, key, corpus, surface, noResults, settings)).Value.ShouldNotBeNull();
+        string? corpus = null, string? surface = null, bool? noResults = null, SearchLogOptions? settings = null,
+        SearchLog? logged = null) =>
+        ((Ok<SearchLogPage>)await ListAsync(Admin(), limit, before, key, corpus, surface, noResults, settings, logged)).Value.ShouldNotBeNull();
 
     [Fact]
     public async Task AKeyWithEveryScopeButAdminIsRefused()
@@ -100,7 +102,48 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
         page.Items.Select(i => i.Id).ShouldBe([6L, 5, 4, 3, 2, 1]);
         page.Matching.ShouldBe(6);
         page.NextBefore.ShouldBeNull();
-        page.OldestUtc.ShouldBe(new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Utc));
+        page.OldestUtc.ShouldBe(At);
+    }
+
+    [Fact]
+    public async Task TheOldestRowIsOfTheWholeLogWhateverTheFiltersAre()
+    {
+        // The rows of key "hook" are the third and fourth, so the oldest they hold is two minutes in; the log goes back further.
+        (await PageAsync(key: "hook")).OldestUtc.ShouldBe(At);
+        (await PageAsync(noResults: true)).OldestUtc.ShouldBe(At);
+    }
+
+    [Fact]
+    public async Task NoResultsFalseDoesNotNarrowTheRows()
+    {
+        var page = await PageAsync(noResults: false);
+
+        page.Matching.ShouldBe(6);
+        page.Items.Count.ShouldBe(6);
+    }
+
+    [Fact]
+    public async Task ThePageCarriesTheNumberOfRowsTheLogDropped()
+    {
+        var log = new SearchLog(Options.Create(new DexiconOptions()));
+        log.CountDropped(3);
+
+        (await PageAsync(logged: log)).Settings.Dropped.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ALimitAboveTheMaximumReturnsTheMaximum()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            for (var i = 0; i < SearchLogEndpoints.MaxLimit + 5; i++) Row(db, At.AddHours(1), "bulk", SearchSurface.Api, "docs", hits: 1);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var page = await PageAsync(limit: 100_000);
+
+        page.Items.Count.ShouldBe(SearchLogEndpoints.MaxLimit);
+        page.NextBefore.ShouldNotBeNull();
     }
 
     [Fact]
@@ -142,12 +185,30 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
         page.Matching.ShouldBe(ids.Length);
     }
 
-    [Fact]
-    public async Task AnUnknownSurfaceIsRefusedWithTheValidOnes()
+    [Theory]
+    [InlineData("carrier-pigeon")]
+    [InlineData("1,2")]
+    [InlineData("3")]
+    [InlineData("api,mcp")]
+    [InlineData("99")]
+    public async Task ASurfaceThatIsNotOneOfTheNamesIsRefusedAndTheNamesAreListed(string surface)
     {
-        var result = await ListAsync(Admin(), surface: "carrier-pigeon");
+        // Enum.TryParse takes a number or a comma list, and "1,2" is 3, which is a surface nobody named.
+        var result = await ListAsync(Admin(), surface: surface);
 
         ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(400);
+        ((ProblemHttpResult)result).ProblemDetails.Detail.ShouldBe("Expected other, api, mcp, context.");
+    }
+
+    [Theory]
+    [InlineData("MCP")]
+    [InlineData(" context ")]
+    public async Task ASurfaceIsMatchedByNameWhateverItsCaseAndPadding(string surface)
+    {
+        var page = await PageAsync(surface: surface);
+
+        page.Items.ShouldNotBeEmpty();
+        page.Items.ShouldAllBe(i => string.Equals(i.Surface.ToString(), surface.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -276,7 +337,7 @@ public sealed class SearchLogHostTests : IDisposable
     }
 
     [Fact]
-    public async Task ASearchAndAContextRequestEachLeaveARowNamingTheirDoor()
+    public async Task ASearchAContextRequestAndAnMcpCallEachLeaveARowNamingTheirDoor()
     {
         _store.OnSearch = q => new SearchResponse { Mode = q.Mode, Hits = [] };
 
@@ -289,18 +350,33 @@ public sealed class SearchLogHostTests : IDisposable
         (await client.PostAsJsonAsync("/api/context",
             new { query = "beta", corpus = new[] { "history" }, mode = "keyword" }, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
-        var page = await ReadLogAsync(client, expected: 2);
+        // The MCP tool, over the transport an agent uses. The server is stateless, so no handshake comes first.
+        using var mcp = new HttpRequestMessage(HttpMethod.Post, "/mcp")
+        {
+            Content = JsonContent.Create(new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tools/call",
+                @params = new { name = "search_index", arguments = new { query = "gamma", corpus = new[] { "history" }, mode = "keyword" } },
+            }),
+        };
+        mcp.Headers.Accept.ParseAdd("application/json");
+        mcp.Headers.Accept.ParseAdd("text/event-stream");
+        (await client.SendAsync(mcp, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
-        page.GetProperty("matching").GetInt32().ShouldBe(2);
+        var page = await ReadLogAsync(client, expected: 3);
+
+        page.GetProperty("matching").GetInt32().ShouldBe(3);
         var items = page.GetProperty("items").EnumerateArray()
             .Select(i => (i.GetProperty("surface").GetString(), i.GetProperty("query").GetString(), i.GetProperty("hits").GetInt32()))
             .ToList();
-        items.ShouldBe([("Context", "beta", 0), ("Api", "alpha", 0)]);
+        items.ShouldBe([("Mcp", "gamma", 0), ("Context", "beta", 0), ("Api", "alpha", 0)]);
         page.GetProperty("settings").GetProperty("enabled").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]
-    public async Task WithTheLogSwitchedOffTheScreenSaysSoAndHoldsNothing()
+    public async Task WithTheLogSwitchedOffTheSettingReachesTheScreen()
     {
         _store.OnSearch = q => new SearchResponse { Mode = q.Mode, Hits = [] };
 
@@ -310,11 +386,11 @@ public sealed class SearchLogHostTests : IDisposable
 
         (await client.PostAsJsonAsync("/api/search",
             new { query = "alpha", corpus = new[] { "history" }, mode = "keyword" }, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        await Task.Delay(500, TestContext.Current.CancellationToken);
 
+        // That nothing is queued while the log is off is tested without a host (SearchLogTests); a wait for a row that
+        // must not appear would be a timer, so this checks only that the setting was read from the environment.
         var page = await ReadLogAsync(client, expected: 0);
 
-        page.GetProperty("matching").GetInt32().ShouldBe(0);
         page.GetProperty("settings").GetProperty("enabled").GetBoolean().ShouldBeFalse();
     }
 }
@@ -333,20 +409,39 @@ public sealed class SearchSurfaceCoverageTests
     }
 
     [Fact]
-    public void EveryConstructionOfASearchRequestNamesItsSurface()
+    public void EveryCallThatSearchesBuildsARequestThatNamesItsSurface()
     {
-        var found = 0;
-        var missing = new List<string>();
+        var calls = 0;
+        var problems = new List<string>();
         var sep = Path.DirectorySeparatorChar;
 
         foreach (var file in Directory.EnumerateFiles(Path.Combine(RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
                      .Where(f => !f.Contains($"{sep}obj{sep}", StringComparison.Ordinal) && !f.Contains($"{sep}bin{sep}", StringComparison.Ordinal)))
         {
             var text = File.ReadAllText(file);
+            string Where(int index) => $"{Path.GetFileName(file)}:{text[..index].Count(c => c == '\n') + 1}";
+
+            // Every call of SearchService.SearchAsync (by the names its receiver has in src) takes a request written out
+            // in the call. A request built elsewhere, or target-typed (`new()`), cannot be read by this scan, so it is
+            // refused here and the call names its request.
+            foreach (Match call in Regex.Matches(text, @"\b(search|searchService)\.SearchAsync\("))
+            {
+                calls++;
+                var args = text.Substring(call.Index, Math.Min(600, text.Length - call.Index));
+                if (!args.Contains("new SearchRequest", StringComparison.Ordinal))
+                    problems.Add($"{Where(call.Index)}: SearchAsync is not given `new SearchRequest {{ ... }}` written in the call");
+            }
+
+            // Every construction has an initializer that names a surface other than Other.
             foreach (Match m in Regex.Matches(text, @"new SearchRequest\b"))
             {
-                found++;
                 var open = text.IndexOf('{', m.Index);
+                if (open < 0 || text[(m.Index + "new SearchRequest".Length)..open].Trim().Length != 0)
+                {
+                    problems.Add($"{Where(m.Index)}: `new SearchRequest` has no object initializer");
+                    continue;
+                }
+
                 var depth = 0;
                 var end = open;
                 for (; end < text.Length; end++)
@@ -355,14 +450,14 @@ public sealed class SearchSurfaceCoverageTests
                     else if (text[end] == '}' && --depth == 0) break;
                 }
 
-                if (!text[open..end].Contains("Surface =", StringComparison.Ordinal))
-                    missing.Add($"{Path.GetFileName(file)}:{text[..m.Index].Count(c => c == '\n') + 1}");
+                if (!Regex.IsMatch(text[open..end], @"\bSurface\s*=\s*SearchSurface\.(Api|Mcp|Context)\b"))
+                    problems.Add($"{Where(m.Index)}: the request does not set Surface to Api, Mcp or Context");
             }
         }
 
         // A scan that reads nothing reports a clean result, so it states what it has to find: the MCP tool,
         // /api/search and the context service.
-        found.ShouldBeGreaterThanOrEqualTo(3, "the scan found fewer SearchRequest constructions than the three callers that exist");
-        missing.ShouldBeEmpty("these build a SearchRequest without a Surface, so the search log records them as Other: " + string.Join(", ", missing));
+        calls.ShouldBeGreaterThanOrEqualTo(3, "the scan found fewer SearchAsync calls than the three callers that exist");
+        problems.ShouldBeEmpty("a search that does not name its surface is recorded as Other: " + string.Join("; ", problems));
     }
 }

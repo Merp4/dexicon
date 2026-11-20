@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SearchesView, score, whatWasAsked } from './Searches';
+import { SearchesView, queryFor, score, whatWasAsked } from './Searches';
 import type { SearchLogItem, SearchLogPage } from './api';
 
 /**
@@ -190,5 +190,147 @@ describe('the searches screen', () => {
     render(<SearchesView onError={onError} />);
 
     await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+  });
+});
+
+describe('what a request for a page carries', () => {
+  it('carries only the filters that are set', () => {
+    expect(queryFor('all', 'any', { key: '', corpus: '' })).toEqual({ limit: 50 });
+    expect(queryFor('nothing', 'mcp', { key: 'hook', corpus: 'docs' }))
+      .toEqual({ limit: 50, noResults: true, surface: 'mcp', key: 'hook', corpus: 'docs' });
+  });
+});
+
+describe('the searches screen, branch by branch', () => {
+  it('stops asking for the empty searches when All is chosen again', async () => {
+    listSearches.mockResolvedValue(page([item()]));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+    await screen.findByRole('table');
+
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'All' }));
+
+    await vi.waitFor(() => expect(listSearches.mock.lastCall?.[0]).not.toHaveProperty('noResults'));
+  });
+
+  it('trims the key and the corpus before it asks', async () => {
+    listSearches.mockResolvedValue(page([item()]));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+    await screen.findByRole('table');
+
+    await user.type(screen.getByLabelText('Key name'), '  hook  ');
+    await user.type(screen.getByLabelText('Corpus name'), ' docs ');
+    await user.click(screen.getByRole('button', { name: 'Filter' }));
+
+    await vi.waitFor(() => expect(listSearches).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'hook', corpus: 'docs' })));
+  });
+
+  it('says the log is kept for ever when retention is zero', async () => {
+    listSearches.mockResolvedValue(page([item()], {
+      settings: { enabled: true, storesQueryText: true, retentionDays: 0, dropped: 0 },
+    }));
+
+    render(<SearchesView onError={vi.fn()} />);
+
+    expect(await screen.findByText(/Kept for ever/)).toBeInTheDocument();
+  });
+
+  it('says no search matches when a filter leaves nothing, and not that nothing was recorded', async () => {
+    listSearches.mockResolvedValueOnce(page([item()]));
+    listSearches.mockResolvedValue(page([], { matching: 0 }));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+    await screen.findByRole('table');
+
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+
+    expect(await screen.findByText('No search matches')).toBeInTheDocument();
+    expect(screen.queryByText('No searches recorded yet')).not.toBeInTheDocument();
+  });
+
+  it('counts the searches that match, not the rows on the page', async () => {
+    listSearches.mockResolvedValue(page([item()], { matching: 7, nextBefore: 3 }));
+
+    render(<SearchesView onError={vi.fn()} />);
+
+    expect(await screen.findByText(/7 searches recorded/)).toBeInTheDocument();
+  });
+
+  it('says how far back the log goes', async () => {
+    listSearches.mockResolvedValue(page([item()], { oldestUtc: '2026-11-01T09:00:00Z' }));
+
+    render(<SearchesView onError={vi.fn()} />);
+
+    expect(await screen.findByText(/The log goes back/)).toBeInTheDocument();
+  });
+
+  it('asks again when Refresh is pressed', async () => {
+    listSearches.mockResolvedValue(page([item()]));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+    await screen.findByRole('table');
+    listSearches.mockClear();
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await vi.waitFor(() => expect(listSearches).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the rows it has when it loads older ones, and drops them when a filter changes', async () => {
+    listSearches.mockResolvedValueOnce(page([item({ id: 900, query: 'the newest one', queryChars: 14 })], { nextBefore: 900, matching: 2 }));
+    listSearches.mockResolvedValueOnce(page([item({ id: 12, query: 'an older one', queryChars: 12 })], { matching: 2 }));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Older searches' }));
+    expect(await screen.findByText('an older one')).toBeInTheDocument();
+    expect(screen.getByText('the newest one')).toBeInTheDocument();
+
+    listSearches.mockResolvedValue(page([item({ id: 950, query: 'a filtered one', queryChars: 14 })]));
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+
+    expect(await screen.findByText('a filtered one')).toBeInTheDocument();
+    expect(screen.queryByText('an older one')).not.toBeInTheDocument();
+    expect(screen.queryByText('the newest one')).not.toBeInTheDocument();
+  });
+
+  it('hands a failed load of older searches to the error banner', async () => {
+    const failure = new Error('refused');
+    listSearches.mockResolvedValueOnce(page([item()], { nextBefore: 5, matching: 2 }));
+    listSearches.mockRejectedValueOnce(failure);
+    const onError = vi.fn();
+    const user = userEvent.setup();
+    render(<SearchesView onError={onError} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Older searches' }));
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+  });
+
+  it('shows the answer to the filter that was last chosen when an earlier answer arrives late', async () => {
+    let releaseFirst: (p: SearchLogPage) => void = () => {};
+    listSearches.mockReturnValueOnce(new Promise<SearchLogPage>((resolve) => { releaseFirst = resolve; }));
+    listSearches.mockResolvedValue(page([item({ query: 'the filtered answer', queryChars: 19 })]));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    expect(await screen.findByText('the filtered answer')).toBeInTheDocument();
+    releaseFirst(page([item({ query: 'the stale answer', queryChars: 16 })]));
+
+    await vi.waitFor(() => expect(listSearches).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('the stale answer')).not.toBeInTheDocument();
+    expect(screen.getByText('the filtered answer')).toBeInTheDocument();
+  });
+
+  it('marks a search that did not name its door as a defect, and one that did as ordinary', async () => {
+    listSearches.mockResolvedValue(page([item({ surface: 'Other' }), item({ surface: 'Mcp' })]));
+
+    render(<SearchesView onError={vi.fn()} />);
+
+    expect((await screen.findByText('Unnamed')).className).toMatch(/warn/);
+    expect(screen.getByText('MCP tool').className).not.toMatch(/warn/);
   });
 });
