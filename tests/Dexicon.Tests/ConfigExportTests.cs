@@ -95,7 +95,7 @@ public sealed class ConfigExportTests : IAsyncLifetime
         });
 
         var tokens = new TokenService(db, TimeProvider.System);
-        var (agent, issued) = tokens.Build("agent", [Scopes.Search, Scopes.Ingest], expiresUtc: null, corpusIds: [IndexingHarness.CorpusId]);
+        var (agent, issued) = tokens.Build("agent", [Scopes.Search, Scopes.Ingest], expiresUtc: null, corpusIds: ["corpus-2", IndexingHarness.CorpusId]);
         _agentSecret = issued.Secret;
         _agentHash = agent.TokenHash;
         _agentSalt = agent.TokenSalt;
@@ -203,7 +203,7 @@ public sealed class ConfigExportTests : IAsyncLifetime
         var keys = (await ExportAsync()).Keys;
 
         keys.Select(k => k.Name).ShouldBe(["agent", "everything", "expired"]);
-        Written(keys[0]).ShouldBe(Written(new ExportedKey("agent", [Scopes.Ingest, Scopes.Search], AllCorpora: false, ["notes"], ExpiresUtc: null)));
+        Written(keys[0]).ShouldBe(Written(new ExportedKey("agent", [Scopes.Ingest, Scopes.Search], AllCorpora: false, ["notes", "Papers"], ExpiresUtc: null)));
         Written(keys[1]).ShouldBe(Written(new ExportedKey("everything", [Scopes.Search], AllCorpora: true, [], Now.AddDays(30))));
         keys[2].AllCorpora.ShouldBeFalse();
         keys[2].Corpora.ShouldBeEmpty();
