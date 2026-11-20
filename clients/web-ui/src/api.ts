@@ -46,6 +46,7 @@ import {
   getApiEmbeddingProviders,
   getApiJobs,
   getApiProposals,
+  getApiSearches,
   getApiTokens,
   getApiWorkspaces,
   getApiWorkspacesGit,
@@ -79,6 +80,7 @@ import type {
   ProbeModelRequest,
   SaveModelProfileRequest,
   SearchApiRequest,
+  GetApiSearchesData,
   UpdateChunkSetRequest,
   UpdateCorpusRequest,
   UploadResponse,
@@ -136,6 +138,8 @@ export type {
   LibraryDocument,
   ModelCapabilities,
   SearchHit,
+  SearchLogItem,
+  SearchLogPage,
   SearchResult,
   TokenSummary,
   UploadFailure,
@@ -254,6 +258,9 @@ export const api = {
    * newest first. Each waiting one carries what it would take, worked out by the server when asked.
    */
   listProposals: (decided = false) => call(() => getApiProposals({ query: { decided } })),
+
+  /** The searches that ran, newest first, a page at a time. Admin only. `before` continues from a page's `nextBefore`. */
+  listSearches: (query: NonNullable<GetApiSearchesData['query']> = {}) => call(() => getApiSearches({ query })),
 
   /** Runs the removal and records the approval together. Refused, with the reason, if it cannot be done now. */
   approveProposal: (id: string) => call(() => postApiProposalsByIdApprove({ path: { id } })),

@@ -3032,6 +3032,52 @@ records, most of them tool output.
 reused, which the indexer does not do for any format. Or when the shape of a transcript changes enough that the
 reader's output loses messages, which the sniff would not report.
 
+### D-52 Every search that ran is recorded, and an administrator can read the record
+
+**Status.** Accepted and implemented, 2026-11-20. Not yet released.
+
+**Decision.** `SearchService.SearchAsync` writes one row to a `search_log` table for each search that returns a result: the
+key, the surface the search came in by (`mcp`, `api` or `context`), the corpora, the mode that ran, the query, the number of
+hits, the first hit's score, the time taken, and whether the result was degraded or carried a note. A search refused before
+it ran (an unknown corpus, an empty scope) is not a row. Rows wait in a bounded channel and a hosted service writes them in
+batches, so a search never waits on the catalogue. A row that the full channel or the catalogue refuses is counted and
+dropped. The Searches screen and `GET /api/searches` read the table. The endpoint needs the `admin` scope, lists newest
+first, pages by row id, and filters by key, corpus, surface and "found nothing" in the query.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DEXICON__SEARCHLOG__ENABLED` | `true` | `false` records nothing. Rows already written stay until retention removes them. |
+| `DEXICON__SEARCHLOG__STOREQUERYTEXT` | `true` | `false` keeps each query's length and drops its text. |
+| `DEXICON__SEARCHLOG__RETENTIONDAYS` | `30` | Rows older than this are deleted daily. `0` keeps every row. |
+
+**Why.** Nothing recorded what agents asked or whether the index could answer. A query that returns nothing leaves no trace
+on the server, so a folder that was never indexed and the behaviour of the per-prompt hook on real prompts could only be
+guessed. A measurement of 2026-11-19 on the `docs` corpus, with 55 committed queries against 80 prompts taken from other
+projects' sessions, found no single similarity threshold that separated the two groups (area under the ROC curve 0.68 for
+the top cosine, 0.81 for the gap between the first and fifth hit), so whether the index can abstain on a prompt is a
+question for real traffic, which this table collects.
+
+**What it holds.** The query as it ran (for a phrase-only search, the phrase), cut at 500 characters, with its full length.
+The context hook sends each prompt in full, so rows hold prompts and anything typed into one. The catalogue and every backup
+of it carry them for the retention period ([10](10-security-secrets.md#what-the-search-log-holds)). The score is in the
+units of the mode that ran, a cosine for `semantic`, the fused value for `hybrid`, so it is compared within a mode. The key
+and the corpora are stored by the names they had then, with no foreign key, so a row outlives both.
+
+**Consequences.**
+
+- Migration `SearchesAreRecorded` adds the table and two indexes, and its down path drops the table. Rehearsed on a copy of
+  the 2026-11-15 backup catalogue (604 MB): applied at host start, then down and up again with `dotnet ef database update`.
+- A write competes with indexing for the catalogue's single writer. One reader drains the channel (capacity 1,000), a
+  locked catalogue costs the rows of the batch in flight after the 30 s busy timeout, and rows still queued when the host
+  stops are lost. `GET /api/searches` and the screen report the number dropped since start.
+- The caller names its surface (`SearchRequest.Surface`). One that does not is recorded as `other` and shown as "Unnamed",
+  and a test fails when a construction of `SearchRequest` under `src` leaves the property out.
+- It records reads. Configuration writes stay in the log output (D-36), and the audit table listed in M5 stays unscheduled.
+- A key cannot read the log, whatever its scopes: it holds what every key searched for.
+
+**Revisit when** the table at the default retention is large enough to slow the screen, or when a key should see its own
+searches.
+
 ---
 
 ## Resolved questions
