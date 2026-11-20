@@ -597,6 +597,15 @@ catalogue can be left part-migrated and requires manual repair. Two things limit
 
 The warnings are left in the log because they describe a real, if unlikely, failure.
 
+## The configuration as a file
+
+The Settings screen has a **Download configuration** button, and `GET /api/config/export` returns the same document to an
+administrator session. It is one indented JSON file: the corpora with their filters, sources and chunk sets, the saved model
+profiles, and each key's name, scopes and reach, with no key secret, no id and no indexed content. Uploaded documents are not in
+it, and its `omitted` list names the corpora that hold them. The layout and the reasons are in
+[D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file). Keep the file with the backups: the volume holds the same
+settings, but the file can be read, diffed and edited, and it is not tied to one catalogue.
+
 ## Upgrading
 
 1. Read the `CHANGELOG.md` section of every version between yours and the target. An

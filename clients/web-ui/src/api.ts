@@ -35,6 +35,7 @@ import {
   getApiCorporaByNameOrIdFile,
   getApiCorporaByNameOrIdCoverage,
   patchApiCorporaByNameOrIdSourcesBySourceId,
+  getApiConfigExport,
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
@@ -257,6 +258,9 @@ export const api = {
    * The removals agents have asked for: the ones waiting, oldest first, or with `decided` the rest,
    * newest first. Each waiting one carries what it would take, worked out by the server when asked.
    */
+  /** The configuration of this instance as a file's content: names, settings and each key's reach, with no secret. Admin only. */
+  exportConfig: () => call(() => getApiConfigExport()),
+
   listProposals: (decided = false) => call(() => getApiProposals({ query: { decided } })),
 
   /** The searches that ran, newest first, a page at a time. Admin only. `before` continues from a page's `nextBefore`. */

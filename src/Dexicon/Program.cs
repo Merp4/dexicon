@@ -219,6 +219,7 @@ app.MapDocumentEndpoints();
 app.MapJobEndpoints();
 app.MapSearchLogEndpoints();
 app.MapProposalEndpoints();
+app.MapConfigEndpoints();
 app.MapEventEndpoints();
 app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();
