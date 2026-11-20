@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Dexicon.Core.Catalog;
 using Dexicon.Core.Configuration;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,10 @@ namespace Dexicon.Core.Search;
 /// catalogue locked for the thirty seconds of its busy timeout by an index job costs those rows and nothing
 /// else. Rows still queued when the host stops are lost, which is the cost of a search never waiting on this.
 /// </summary>
+[SuppressMessage("Dexicon.Cancellation", "TokenAfterCommit", Justification =
+    "Each loop writes a batch or prunes, then waits for the next batch or the next day on the host's stopping token. "
+    + "A wait cancelled at shutdown loses nothing that was written: a batch is one save, and rows still queued when the host "
+    + "stops are dropped by design (see the type's summary).")]
 public sealed class SearchLogWriter(
     SearchLog log,
     IServiceScopeFactory scopes,
