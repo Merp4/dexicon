@@ -3127,11 +3127,11 @@ secret exists only as a hash) and no admin password. No uploaded document: an up
   query would return each source once for every chunk set of its corpus), then the profiles, then the keys with the corpora
   they reach.
 
-The file is read by the import ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-and-nothing-is-removed)).
+The file is read by the import ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set)).
 
 ---
 
-### D-54 A configuration file can be read into an instance, and nothing is removed
+### D-54 A configuration file can be read into an instance without deleting a corpus, source or chunk set
 
 **Status.** Accepted and implemented, 2026-11-20. Not yet released.
 
@@ -3180,10 +3180,11 @@ smaller than the instance from removing what it does not mention.
   ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)); the items for a filter change say so.
 - An apply cannot be undone as a whole. What it made is removed through the removal paths, and an update is changed back by
   applying the file that held the earlier values.
-- Items follow the file: each corpus, then its sources in the file's order and its chunk sets by name, and the corpora and
-  sources here that the file does not name after them. A file written by the export is in name order. A file written by hand
+- Items follow the file: each corpus, then its sources in the file's order, its chunk sets by name and the sources of it that
+  are here and not in the file; the corpora here that the file does not name come after the last corpus. A file written by the
+  export is in name order. A file written by hand
   can leave out a list or a block of filters, and is read as having none of it.
-- These refuse the whole file (400) before anything is made: another `format` or `version`, a null entry in any list, a corpus
+- These refuse the whole file (400) before anything is made: another `format` or `version`, a null entry in any list (a glob included), a corpus
   with no name or named twice (ignoring case and surrounding space), a source with no `rootPath` or with a kind other than
   `workspace` or `githistory`, and a corpus that lists one source twice under spellings of one folder.
 - A step that fails for a reason that is not a rule is reported `failed`, and the catalogue is read again before the next corpus, so

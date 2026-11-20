@@ -11,8 +11,8 @@ namespace Dexicon.Api;
 /// <summary>
 /// What an import did, or with <c>apply</c> left off what it would do (D-54). One item for each corpus, source, chunk set,
 /// model profile and key in the file, and one for each corpus, and each source of a corpus in the file, that is here and that
-/// the file does not name. A corpus's item comes first, then its sources and its chunk sets; items for what is here and not in the
-/// file follow.
+/// the file does not name. A corpus's item comes first, then its sources, its chunk sets and the sources of it that are here and
+/// not in the file; items for the corpora here that the file does not name follow the last corpus, then the profiles and keys.
 /// </summary>
 /// <param name="Applied">False for a dry run, which changes nothing.</param>
 public sealed record ConfigImportResult(bool Applied, IReadOnlyList<ImportItem> Items, IReadOnlyDictionary<string, int> Counts);
@@ -47,7 +47,7 @@ internal sealed class ConfigImporter(CatalogDbContext db, CorpusConfiguration co
 
     private const string StopsBetweenSteps =
         "Each step is saved whole by CorpusConfiguration, and the import is repeatable: a caller that goes away stops it between "
-        + "steps, and applying the file again makes what is missing and reports the rest as unchanged.";
+        + "steps, and applying the file again makes the sources that are missing.";
 
     private const string Narrowing = "A narrower filter removes the files it now excludes from the index at the refresh.";
 
@@ -103,8 +103,8 @@ internal sealed class ConfigImporter(CatalogDbContext db, CorpusConfiguration co
 
     /// <summary>
     /// Why the whole file is refused before anything is made, or null. A file of another format or version, an entry that is
-    /// null, a corpus with no name or named twice (ignoring case and surrounding space), a source with no root or a kind other
-    /// than <c>workspace</c> or <c>githistory</c>, and a corpus that lists one source twice (the same kind and canonical root).
+    /// null, a null glob, a corpus with no name or named twice (ignoring case and surrounding space), a source with no root or a
+    /// kind other than <c>workspace</c> or <c>githistory</c> (ignoring case), and a corpus that lists one source twice (the same kind and canonical root).
     /// </summary>
     public ConfigRefusal? Check(ConfigExport file)
     {
@@ -135,6 +135,9 @@ internal sealed class ConfigImporter(CatalogDbContext db, CorpusConfiguration co
             if (sources.Any(s => s is null) || (corpus.ChunkSets ?? []).Any(s => s is null))
                 return new ConfigRefusal("The file has an empty entry", $"A list of corpus '{name}' holds null where an entry should be.", 400);
 
+            if (HasNullGlob(corpus.Defaults) || sources.Any(s => HasNullGlob(s.Filters)))
+                return new ConfigRefusal("A glob list has an empty entry", $"A list of globs of corpus '{name}' holds null where a glob should be.", 400);
+
             foreach (var source in sources)
             {
                 if (!string.Equals(source.Kind, FileSource, StringComparison.OrdinalIgnoreCase)
@@ -164,6 +167,9 @@ internal sealed class ConfigImporter(CatalogDbContext db, CorpusConfiguration co
 
         return null;
     }
+
+    private static bool HasNullGlob(ExportedFilters? filters) =>
+        filters is not null && ((filters.IncludeGlobs?.Any(g => g is null) ?? false) || (filters.ExcludeGlobs?.Any(g => g is null) ?? false));
 
     // ---------------------------------------------------------------------------------------------------- new corpus
 
@@ -220,7 +226,8 @@ internal sealed class ConfigImporter(CatalogDbContext db, CorpusConfiguration co
         // The request replaces all four default filters, so the file's four are what is stored afterwards, and the item names
         // the ones that differ. A file that sets none sends four nulls, which clear them.
         if (defaultsDiffer) changes.Add($"the default filters ({string.Join(", ", differing)})");
-        var note = defaultsDiffer ? $" A refresh of the corpus's sources follows. {Narrowing}" : string.Empty;
+        // UpdateCorpusAsync queues a refresh only for a corpus that has a source, and a corpus without one has nothing to narrow.
+        var note = defaultsDiffer && corpus.Sources.Count > 0 ? $" A refresh of the corpus's sources follows. {Narrowing}" : string.Empty;
 
         if (changes.Count == 0)
             items.Add(new ImportItem("corpus", corpus.Name, "unchanged", wanted.Description is null && corpus.Description is not null

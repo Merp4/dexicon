@@ -433,21 +433,22 @@ public sealed class ConfigImportTests : IAsyncLifetime
     [Fact]
     public async Task AFileThatSetsNoDefaultFiltersClearsTheOnesHereAndNamesWhichDiffer()
     {
-        await RunAsync(File(Corpus("Papers", defaults: new ExportedFilters(null, ["a/**"], UseGitignore: true, MaxFileBytes: 100))), apply: true);
+        await RunAsync(File(Corpus("Papers", [Source("notes")], defaults: new ExportedFilters(null, ["a/**"], UseGitignore: true, MaxFileBytes: 100))), apply: true);
 
-        var plan = await RunAsync(File(Corpus("Papers")), apply: false);
+        var plan = await RunAsync(File(Corpus("Papers", [Source("notes")])), apply: false);
 
         var item = plan.Items.Single(i => i.Kind == "corpus");
         item.Outcome.ShouldBe("update");
         item.Detail.ShouldNotBeNull().ShouldContain("(excludeGlobs, useGitignore, maxFileBytes)");
         item.Detail.ShouldContain("removes the files it now excludes from the index");
 
-        var applied = await RunAsync(File(Corpus("Papers")), apply: true);
+        var applied = await RunAsync(File(Corpus("Papers", [Source("notes")])), apply: true);
 
         applied.Items.Single(i => i.Kind == "corpus").Outcome.ShouldBe("update");
+        applied.Items.Single(i => i.Kind == "corpus").Detail.ShouldNotBeNull().ShouldContain("removes the files it now excludes");
         var stored = await StoredAsync("Papers");
         (stored.DefaultIncludeGlobs, stored.DefaultExcludeGlobs, stored.DefaultUseGitignore, stored.DefaultMaxFileBytes).ShouldBe((null, null, null, null));
-        Outcomes(await RunAsync(File(Corpus("Papers")), apply: true), "corpus").ShouldBe("Papers=unchanged", "the clearing took, and an import does not report it again");
+        Outcomes(await RunAsync(File(Corpus("Papers", [Source("notes")])), apply: true), "corpus").ShouldBe("Papers=unchanged", "the clearing took, and an import does not report it again");
     }
 
     [Fact]
@@ -831,6 +832,103 @@ public sealed class ConfigImportTests : IAsyncLifetime
     public async Task ACorpusNamedTwiceBySurroundingSpaceRefusesTheWholeFile()
     {
         (await RefusedAsync(File(Corpus("Papers"), Corpus(" papers ")))).ShouldBe("A corpus is named twice");
+    }
+
+    private async Task<string> RefusalDetailAsync(ConfigExport file)
+    {
+        var result = await CallAsync(file, Admin(), apply: true);
+        ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(400);
+        return ((ProblemHttpResult)result).ProblemDetails.Detail ?? string.Empty;
+    }
+
+    [Fact]
+    public async Task EachRefusalOfTheWholeFileSaysWhatToSend()
+    {
+        var wrongFormat = await RefusalDetailAsync(File(Corpus("Papers")) with { Format = "other" });
+        var empty = await RefusalDetailAsync(File(new ExportedCorpus[] { null! }));
+        var unnamed = await RefusalDetailAsync(File(Corpus(" ")));
+        var twice = await RefusalDetailAsync(File(Corpus("Papers"), Corpus("PAPERS")));
+        var nullGlob = await RefusalDetailAsync(File(Corpus("Papers", defaults: new ExportedFilters(["a", null!], null, null, null))));
+        var kind = await RefusalDetailAsync(File(Corpus("Papers", [new ExportedSource("bogus", "notes", Unset, null)])));
+        var noRoot = await RefusalDetailAsync(File(Corpus("Papers", [new ExportedSource("workspace", null, Unset, null)])));
+        var listedTwice = await RefusalDetailAsync(File(Corpus("Papers", [Source("notes"), Source("notes/")])));
+
+        wrongFormat.ShouldBe("Expected format 'dexicon-config' version 1.");
+        empty.ShouldBe("A list in the file holds null where an entry should be.");
+        unnamed.ShouldBe("Every corpus in the file needs a name.");
+        twice.ShouldBe("The file names a corpus 'Papers' more than once. Names are unique, ignoring case.");
+        nullGlob.ShouldBe("A list of globs of corpus 'Papers' holds null where a glob should be.");
+        kind.ShouldBe("A source of corpus 'Papers' has kind 'bogus'. The kinds are 'workspace' and 'githistory'.");
+        noRoot.ShouldBe("A workspace source of corpus 'Papers' has no rootPath. An empty string is the workspace root.");
+        listedTwice.ShouldBe("Corpus 'Papers' lists the workspace source 'notes' more than once, under spellings that name one folder.");
+    }
+
+    [Fact]
+    public async Task ANullGlobInASourceRefusesTheWholeFile()
+    {
+        (await RefusedAsync(File(Corpus("Papers", [Source("notes", new ExportedFilters(null, ["a", null!], null, null))])))).ShouldBe("A glob list has an empty entry");
+    }
+
+    [Theory]
+    [InlineData("Workspace", "workspace")]
+    [InlineData("WORKSPACE", "workspace")]
+    [InlineData("GitHistory", "githistory")]
+    public async Task AKindIsAcceptedByTheRouteIgnoringCase(string kind, string stored)
+    {
+        var repo = Path.Combine(_harness.Settings.Value.Indexing.WorkspaceRoot, "history");
+        StashFixture.Init(repo);
+        StashFixture.Commit(repo, "a.txt", "one", "first");
+        var source = new ExportedSource(kind, stored == "githistory" ? "history" : "notes", Unset, stored == "githistory" ? new GitHistoryOptions { Ref = "main" } : null);
+
+        var result = await CallAsync(File(Corpus("Papers", [source])), Admin(), apply: true);
+
+        ((Ok<ConfigImportResult>)result).Value.ShouldNotBeNull().Items.Single(i => i.Kind == "source").Outcome.ShouldBe("create");
+        (await StoredAsync("Papers")).Sources.Single().Kind.ToString().ToLowerInvariant().ShouldBe(stored);
+    }
+
+    [Fact]
+    public async Task AChangeToOnlyTheDefaultIncludeGlobsIsAnUpdate()
+    {
+        await RunAsync(File(Corpus("Papers", defaults: new ExportedFilters(["a/**"], null, null, null))), apply: true);
+
+        var result = await RunAsync(File(Corpus("Papers", defaults: new ExportedFilters(["b/**"], null, null, null))), apply: true);
+
+        result.Items.Single(i => i.Kind == "corpus").Detail.ShouldNotBeNull().ShouldStartWith("Changed the default filters (includeGlobs).");
+        SourceFilters.Globs((await StoredAsync("Papers")).DefaultIncludeGlobs).ShouldBe(["b/**"]);
+    }
+
+    [Fact]
+    public async Task ChangedDefaultsSayTheRefreshAndTheNarrowingOnlyWhenTheCorpusHasASource()
+    {
+        await RunAsync(File(Corpus("With", [Source("notes")]), Corpus("Without")), apply: true);
+        var file = File(
+            Corpus("With", [Source("notes")], defaults: new ExportedFilters(null, ["old/**"], null, null)),
+            Corpus("Without", defaults: new ExportedFilters(null, ["old/**"], null, null)));
+
+        var result = await RunAsync(file, apply: true);
+
+        result.Items.Single(i => i.Kind == "corpus" && i.Name == "With").Detail.ShouldBe(
+            "Changed the default filters (excludeGlobs). A refresh of the corpus's sources follows. "
+            + "A narrower filter removes the files it now excludes from the index at the refresh.");
+        result.Items.Single(i => i.Kind == "corpus" && i.Name == "Without").Detail.ShouldBe("Changed the default filters (excludeGlobs).");
+    }
+
+    [Fact]
+    public async Task TwoSpellingsOfARootThePlatformCannotReadAreStillOneSource()
+    {
+        (await RefusedAsync(File(Corpus("Papers", [Source("a b"), Source("a b/")])))).ShouldBe("A source is listed twice");
+    }
+
+    [Fact]
+    public async Task ARootThePlatformCannotReadAsAPathIsReportedAndDoesNotEscapeTheImport()
+    {
+        var file = File(Corpus("Papers", [Source("a\0b"), Source("notes")]));
+
+        var plan = await RunAsync(file, apply: false);
+        var applied = await RunAsync(file, apply: true);
+
+        plan.Items.Count(i => i.Kind == "source").ShouldBe(2);
+        applied.Items.Single(i => i.Kind == "source" && i.Name.EndsWith("a\0b", StringComparison.Ordinal)).Outcome.ShouldBeOneOf("refused", "failed");
     }
 
     [Fact]
