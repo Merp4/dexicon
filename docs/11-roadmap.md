@@ -306,6 +306,7 @@ row was asked for and has shipped.
 | ~~Cut history documents in sections and filter a search on them~~ | **Done** in 0.7.0. See [D-49](decisions.md#d-49-a-history-document-is-cut-in-sections-and-search-can-filter-on-them). |
 | ~~Search for an exact phrase~~ | **Done** in 0.7.0, as `phrase` on search, context and `search_index`. See [D-50](decisions.md#d-50-a-search-can-ask-for-a-phrase-and-qdrant-checks-the-stored-text). |
 | ~~Export the configuration as a JSON file~~ | **Done** on main, not yet released. See [D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file). |
+| ~~Import the configuration from a JSON file~~ | **Done** on main for corpora, their filters and their sources, not yet released. Chunk sets, keys and model profiles are not read. See [D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-and-nothing-is-removed). |
 | ~~Index Claude Code transcripts as conversations~~ | **Done** in 0.7.0. See [D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation). |
 | ~~Record searches and show them~~ | **Done** on main, not yet released. See [D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record). |
 

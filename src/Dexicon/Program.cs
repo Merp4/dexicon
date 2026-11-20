@@ -111,6 +111,7 @@ builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
 builder.Services.AddScoped<CorpusConfiguration>();
+builder.Services.AddScoped<ConfigImporter>();
 builder.Services.AddScoped<ProposalService>();
 // A singleton, because what it counts belongs to the machine and the endpoints rather
 // than to a caller. Scoped, it would be one limit per request and describe nothing.
@@ -220,6 +221,7 @@ app.MapJobEndpoints();
 app.MapSearchLogEndpoints();
 app.MapProposalEndpoints();
 app.MapConfigEndpoints();
+app.MapConfigImportEndpoints();
 app.MapEventEndpoints();
 app.MapWorkspaceEndpoints();
 app.MapAdminEndpoints();
