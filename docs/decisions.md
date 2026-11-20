@@ -3048,7 +3048,7 @@ first, pages by row id, and filters by key, corpus, surface and "found nothing" 
 |---|---|---|
 | `DEXICON__SEARCHLOG__ENABLED` | `true` | `false` records nothing. Rows already written stay until retention removes them. |
 | `DEXICON__SEARCHLOG__STOREQUERYTEXT` | `true` | `false` keeps each query's length and drops its text. |
-| `DEXICON__SEARCHLOG__RETENTIONDAYS` | `30` | Rows older than this are deleted daily. `0` keeps every row. |
+| `DEXICON__SEARCHLOG__RETENTIONDAYS` | `30` | Rows older than this are deleted daily. `0`, or a negative number, keeps every row. A value above 36,500 counts as 36,500. |
 
 **Why.** Nothing recorded what agents asked or whether the index could answer. A query that returns nothing leaves no trace
 on the server, so a folder that was never indexed and the behaviour of the per-prompt hook on real prompts could only be
@@ -3058,7 +3058,7 @@ on a prompt is a question for real traffic, which this table collects. That meas
 its figures are left out until it is.
 
 **What it holds.** The query as it ran (for a phrase-only search, the phrase), cut at 500 characters, with its full length.
-The context hook, once installed (it is opt-in), sends each prompt it handles in full, so rows hold prompts and anything
+The context hook, once registered (it is opt-in), sends each prompt it handles in full, so rows hold prompts and anything
 typed into one. Queries an agent sends over MCP are stored whether or not the hook is installed. The catalogue and every backup
 of it carry them for the retention period ([10](10-security-secrets.md#what-the-search-log-holds)). The score is in the
 units of the mode that ran, a cosine for `semantic`, the fused value for `hybrid`, so it is compared within a mode. The key
@@ -3071,9 +3071,9 @@ and the corpora are stored by the names they had then, with no foreign key, so a
   `dotnet ef database update`. No script in the repository repeats it.
 - Rolling back to an image without this change leaves the table, its rows and the migration history row in the catalogue.
   The older image ignores them and starts, and the rows keep their query text until they are deleted by hand.
-- A write competes with indexing for the catalogue's single writer. One reader drains the channel (capacity 1,000), a
-  locked catalogue costs the rows of the batch in flight after the 30 s busy timeout, and rows still queued when the host
-  stops are lost. `GET /api/searches` and the screen report the number dropped since start.
+- A write competes with indexing for the catalogue's single writer. One reader drains the channel (capacity 1,000). A batch
+  the catalogue refuses is tried once more after 2 s, and a batch refused twice (each attempt waits up to the 30 s busy
+  timeout) is dropped and counted. Rows still queued when the host stops are lost. `GET /api/searches` and the screen report the number dropped since start.
 - The caller names its surface (`SearchRequest.Surface`). One that does not is recorded as `other` and shown as "Unnamed",
   and a test fails when a construction of `SearchRequest` under `src` leaves the property out.
 - It records reads. Configuration writes stay in the log output (D-36), and the audit table listed in M5 stays unscheduled.

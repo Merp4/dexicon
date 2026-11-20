@@ -382,8 +382,9 @@ Dexicon reads and never writes.
 
 The catalogue keeps a row for each search that ran ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)):
 who asked, by which surface, the query text cut at 500 characters, how many hits came back and how long it took. The
-per-prompt hook ([12](12-clients.md#hooks-for-claude-code)) sends every prompt it handles, in full, as the query, so rows
-hold what was typed into a prompt, a pasted credential included. Only an administrator can read them, through the Searches
+per-prompt hook ([12](12-clients.md#hooks-for-claude-code)), where it is registered, sends every prompt it handles, in
+full, as the query, and an agent's own MCP queries are stored whether or not the hook is there, so rows hold what was typed
+into a prompt or a query, a pasted credential included. Only an administrator can read them, through the Searches
 screen or `GET /api/searches`, and a key cannot, whatever its scopes.
 
 The rows are in `catalog.db` and in every backup of it, for `DEXICON__SEARCHLOG__RETENTIONDAYS` days (30 by default; `0`

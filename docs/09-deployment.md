@@ -355,7 +355,7 @@ in `.env` has no effect. Every setting has a working default; `WORKSPACE_ROOT` d
 | `DEXICON_LOG_LEVEL` | `DEXICON__LOG__LEVEL` | `Information` | `Trace` (also spelled `Verbose`), `Debug`, `Information`, `Warning` or `Error`, case-sensitive. Any other value logs at `Information`. |
 | `DEXICON_SEARCHLOG_ENABLED` | `DEXICON__SEARCHLOG__ENABLED` | `true` | `false` records no search. Rows already written stay until retention removes them ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)). |
 | `DEXICON_SEARCHLOG_STOREQUERYTEXT` | `DEXICON__SEARCHLOG__STOREQUERYTEXT` | `true` | `false` keeps each query's length and drops its text. The per-prompt hook, when installed, sends every prompt it handles in full, and an agent's MCP queries are stored too, so with `true` the catalogue and its backups hold them ([10](10-security-secrets.md#what-the-search-log-holds)). |
-| `DEXICON_SEARCHLOG_RETENTIONDAYS` | `DEXICON__SEARCHLOG__RETENTIONDAYS` | `30` | Days a row is kept, deleted daily. `0` keeps every row, and the table then grows without bound. |
+| `DEXICON_SEARCHLOG_RETENTIONDAYS` | `DEXICON__SEARCHLOG__RETENTIONDAYS` | `30` | Days a row is kept, deleted daily. `0`, or a negative number, keeps every row, and the table then grows without bound. A value above 36,500 counts as 36,500. |
 | `DEXICON_TAG`, `DEXICON_OWNER` | | `latest`, `merp4` | Which Dexicon image: `ghcr.io/<owner>/dexicon:<tag>`. See "Image tags". |
 | `QDRANT_TAG`, `OLLAMA_TAG` | | `v1.20.1`, `0.40.16` | Which Qdrant and Ollama images. |
 | `DEXICON_GPU_DEVICE_IDS` | | `0` | Which GPU the embedder uses, as `nvidia-smi -L` numbers them. Read only when `docker-compose.gpu.yml` is applied. |

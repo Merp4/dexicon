@@ -300,6 +300,46 @@ describe('the searches screen, branch by branch', () => {
     expect(screen.queryByText('the newest one')).not.toBeInTheDocument();
   });
 
+  it('asks for older searches under the filters that are set', async () => {
+    listSearches.mockResolvedValueOnce(page([item()]));
+    listSearches.mockResolvedValueOnce(page([item({ id: 7 })], { nextBefore: 7, matching: 2 }));
+    listSearches.mockResolvedValueOnce(page([item({ id: 3 })], { matching: 2 }));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+    await screen.findByRole('table');
+
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(await screen.findByRole('button', { name: 'Older searches' }));
+
+    await vi.waitFor(() => expect(listSearches).toHaveBeenLastCalledWith(expect.objectContaining({ noResults: true, before: 7 })));
+  });
+
+  it('drops older searches that arrive after the filters changed', async () => {
+    let releaseOlder: (p: SearchLogPage) => void = () => {};
+    listSearches.mockResolvedValueOnce(page([item({ id: 900 })], { nextBefore: 900, matching: 2 }));
+    listSearches.mockReturnValueOnce(new Promise<SearchLogPage>((resolve) => { releaseOlder = resolve; }));
+    listSearches.mockResolvedValue(page([item({ id: 950, query: 'under the new filter', queryChars: 20 })]));
+    const user = userEvent.setup();
+    render(<SearchesView onError={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Older searches' }));
+    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    expect(await screen.findByText('under the new filter')).toBeInTheDocument();
+    await act(async () => { releaseOlder(page([item({ id: 12, query: 'under the old filter', queryChars: 19 })])); });
+
+    expect(screen.queryByText('under the old filter')).not.toBeInTheDocument();
+  });
+
+  it('says for ever when retention is below zero too', async () => {
+    listSearches.mockResolvedValue(page([item()], {
+      settings: { enabled: true, storesQueryText: true, retentionDays: -1, dropped: 0 },
+    }));
+
+    render(<SearchesView onError={vi.fn()} />);
+
+    expect(await screen.findByText(/Kept for ever/)).toBeInTheDocument();
+  });
+
   it('hands a failed load of older searches to the error banner', async () => {
     const failure = new Error('refused');
     listSearches.mockResolvedValueOnce(page([item()], { nextBefore: 5, matching: 2 }));

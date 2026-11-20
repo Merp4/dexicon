@@ -461,6 +461,98 @@ public sealed class SearchLogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ANegativeRetentionKeepsEveryRow()
+    {
+        var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
+        var settings = Settings(days: -1);
+        var log = new SearchLog(settings);
+        await SeedAsync(now.UtcDateTime.AddDays(-400), now.UtcDateTime.AddDays(-1));
+
+        (await WriterFor(log, settings, new FixedClock(now)).PruneAsync(TestContext.Current.CancellationToken)).ShouldBe(0);
+
+        await using var db = _harness.NewContext();
+        (await db.SearchLog.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ARefusedBatchWaitsTheRetryDelayBeforeItsSecondAttempt()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        var scopes = new FlakyScopes(ScopesOverTheCatalogue(), refusals: 1);
+        var writer = new SearchLogWriter(log, scopes, settings, TimeProvider.System, NullLogger<SearchLogWriter>.Instance)
+        {
+            RetryDelay = TimeSpan.FromMilliseconds(250),
+        };
+        var batch = new List<SearchLogRow> { new() { TokenId = "k", TokenName = "agent", Corpora = "notes", Mode = "keyword" } };
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await writer.WriteAsync(batch, TestContext.Current.CancellationToken);
+        clock.Stop();
+
+        clock.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(240, "the second attempt came after the delay, not at once");
+        scopes.Attempts.ShouldBe(2);
+    }
+
+    [Fact]
+    public void ARefusedBatchIsRetriedTwoSecondsLaterUnlessToldOtherwise()
+    {
+        var settings = Settings();
+        var writer = new SearchLogWriter(new SearchLog(settings), new RefusingScopes(), settings, TimeProvider.System,
+            NullLogger<SearchLogWriter>.Instance);
+
+        writer.RetryDelay.ShouldBe(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task AWriteCancelledDuringItsRetryIsCancelledAndNotCountedAsDropped()
+    {
+        var settings = Settings();
+        var log = new SearchLog(settings);
+        using var stopping = new CancellationTokenSource();
+        var writer = WriterFor(log, settings, scopes: new CancelsOnTheSecondAttempt(stopping));
+        var batch = new List<SearchLogRow> { new() { TokenId = "k", TokenName = "agent", Corpora = "notes", Mode = "keyword" } };
+
+        await Should.ThrowAsync<OperationCanceledException>(writer.WriteAsync(batch, stopping.Token));
+
+        log.Dropped.ShouldBe(0, "the host was stopping, which is not the catalogue refusing the rows");
+    }
+
+    [Fact]
+    public void AListOfExactlyTheLimitIsKeptWhole()
+    {
+        var list = new string('a', SearchLog.MaxCorporaChars);
+
+        SearchLog.CutList(list, SearchLog.MaxCorporaChars).ShouldBe(list);
+    }
+
+    [Fact]
+    public void ACommaJustInsideTheLimitIsAWholeNameAndTheResultFillsTheLimit()
+    {
+        // A comma at 498 leaves room for ",…" in the two characters that remain.
+        var list = new string('a', 498) + ",bbb";
+
+        var cut = SearchLog.CutList(list, SearchLog.MaxCorporaChars);
+
+        cut.ShouldBe(new string('a', 498) + ",…");
+        cut.Length.ShouldBe(SearchLog.MaxCorporaChars);
+    }
+
+    [Theory]
+    [InlineData(499)]
+    [InlineData(500)]
+    public void ACommaWithNoRoomForTheMarkIsNotKeptAndTheResultStaysWithinTheLimit(int commaAt)
+    {
+        var list = new string('a', commaAt) + ",bbb";
+
+        var cut = SearchLog.CutList(list, SearchLog.MaxCorporaChars);
+
+        cut.Length.ShouldBeLessThanOrEqualTo(SearchLog.MaxCorporaChars);
+        cut.ShouldEndWith("…");
+        cut.ShouldNotContain(",");
+    }
+
+    [Fact]
     public async Task ZeroRetentionDaysKeepsEveryRow()
     {
         var now = new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero);
@@ -496,6 +588,20 @@ public sealed class SearchLogTests : IAsyncLifetime
         {
             Attempts++;
             return Attempts <= refusals ? throw new InvalidOperationException("the catalogue is locked") : inner.CreateScope();
+        }
+    }
+
+    /// <summary>Refuses the first attempt, then cancels the host's token and fails the second the way a cancelled save does.</summary>
+    private sealed class CancelsOnTheSecondAttempt(CancellationTokenSource stopping) : IServiceScopeFactory
+    {
+        private int _attempts;
+
+        public IServiceScope CreateScope()
+        {
+            if (++_attempts == 1) throw new InvalidOperationException("the catalogue is locked");
+
+            stopping.Cancel();
+            throw new OperationCanceledException(stopping.Token);
         }
     }
 

@@ -34,7 +34,7 @@ public static class SearchLogEndpoints
         // By name only. Enum.TryParse also takes a number or a comma list ("1,2" is 3), which would filter on a surface
         // the caller did not name while the error message says only names are accepted.
         SearchSurface? onlySurface = null;
-        if (!string.IsNullOrWhiteSpace(surface))
+        if (!string.IsNullOrEmpty(surface))
         {
             var names = Enum.GetNames<SearchSurface>();
             var match = names.FirstOrDefault(n => string.Equals(n, surface.Trim(), StringComparison.OrdinalIgnoreCase));

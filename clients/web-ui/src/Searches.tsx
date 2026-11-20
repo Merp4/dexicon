@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api, type SearchLogItem, type SearchLogPage } from './api';
 import {
@@ -67,10 +67,15 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [reload, setReload] = useState(0);
 
+  // Which answer the screen is waiting for. A page of older searches that arrives after the filters changed was asked
+  // under the old ones, and is dropped.
+  const generation = useRef(0);
+
   const filters = useCallback(() => queryFor(which, surface, text), [which, surface, text]);
 
   useEffect(() => {
     let cancelled = false;
+    generation.current += 1;
     setFirst(null);
     setMore([]);
     api.listSearches(filters())
@@ -86,8 +91,10 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
   async function loadMore() {
     if (next == null) return;
     setLoadingMore(true);
+    const asked = generation.current;
     try {
       const page = await api.listSearches({ ...filters(), before: next });
+      if (asked !== generation.current) return;
       setMore((rows) => [...rows, ...page.items]);
       setNext(page.nextBefore ?? null);
     } catch (e) {
@@ -129,7 +136,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
       )}
       {settings?.enabled && (
         <Notice tone="neutral">
-          Kept for {settings.retentionDays === 0 ? 'ever' : count(settings.retentionDays, 'day')}.{' '}
+          Kept for {settings.retentionDays <= 0 ? 'ever' : count(settings.retentionDays, 'day')}.{' '}
           {settings.storesQueryText
             ? 'The text of each query is stored, including every prompt the context hook sends, and is in backups of the catalogue.'
             : 'The text of a query is not stored, only its length.'}

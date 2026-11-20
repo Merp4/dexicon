@@ -333,7 +333,8 @@ public sealed class LogOptions
 
 /// <summary>
 /// The record of searches that ran, shown on the Searches screen. It holds what callers typed: the context
-/// hook sends each prompt in full, and the catalogue, and every backup of it, keeps the text for
+/// hook, where it is registered, sends each prompt it handles in full, an agent's MCP queries are stored too, and the
+/// catalogue, and every backup of it, keeps the text for
 /// <see cref="RetentionDays"/> days. See docs/10-security-secrets.md.
 /// </summary>
 public sealed class SearchLogOptions

@@ -191,6 +191,7 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
     [InlineData("3")]
     [InlineData("api,mcp")]
     [InlineData("99")]
+    [InlineData(" ")]
     public async Task ASurfaceThatIsNotOneOfTheNamesIsRefusedAndTheNamesAreListed(string surface)
     {
         // Enum.TryParse takes a number or a comma list, and "1,2" is 3, which is a surface nobody named.
@@ -421,18 +422,20 @@ public sealed class SearchSurfaceCoverageTests
             var text = File.ReadAllText(file);
             string Where(int index) => $"{Path.GetFileName(file)}:{text[..index].Count(c => c == '\n') + 1}";
 
-            // Every call of SearchService.SearchAsync (by the names its receiver has in src) takes a request written out
-            // in the call. A request built elsewhere, or target-typed (`new()`), cannot be read by this scan, so it is
-            // refused here and the call names its request.
-            foreach (Match call in Regex.Matches(text, @"\b(search|searchService)\.SearchAsync\("))
+            // Every call of SearchAsync on any receiver: the vector store's takes a SearchQuery and is left alone, and any
+            // other takes a request written out in the call. A request built elsewhere, or target-typed (`new()`), cannot
+            // be read by this scan, so it is refused here and the call names its request.
+            foreach (Match call in Regex.Matches(text, @"\.SearchAsync\("))
             {
+                var args = Between(text, call.Index + call.Length - 1, '(', ')');
+                if (args.Contains("new SearchQuery", StringComparison.Ordinal)) continue;
+
                 calls++;
-                var args = text.Substring(call.Index, Math.Min(600, text.Length - call.Index));
                 if (!args.Contains("new SearchRequest", StringComparison.Ordinal))
                     problems.Add($"{Where(call.Index)}: SearchAsync is not given `new SearchRequest {{ ... }}` written in the call");
             }
 
-            // Every construction has an initializer that names a surface other than Other.
+            // Every construction has an initializer that names a surface other than Other, outside comments and strings.
             foreach (Match m in Regex.Matches(text, @"new SearchRequest\b"))
             {
                 var open = text.IndexOf('{', m.Index);
@@ -442,15 +445,8 @@ public sealed class SearchSurfaceCoverageTests
                     continue;
                 }
 
-                var depth = 0;
-                var end = open;
-                for (; end < text.Length; end++)
-                {
-                    if (text[end] == '{') depth++;
-                    else if (text[end] == '}' && --depth == 0) break;
-                }
-
-                if (!Regex.IsMatch(text[open..end], @"\bSurface\s*=\s*SearchSurface\.(Api|Mcp|Context)\b"))
+                var initializer = Regex.Replace(Between(text, open, '{', '}'), @"//[^\n]*|/\*.*?\*/|""(?:[^""\\]|\\.)*""", " ", RegexOptions.Singleline);
+                if (!Regex.IsMatch(initializer, @"\bSurface\s*=\s*SearchSurface\.(Api|Mcp|Context)\b"))
                     problems.Add($"{Where(m.Index)}: the request does not set Surface to Api, Mcp or Context");
             }
         }
@@ -459,5 +455,18 @@ public sealed class SearchSurfaceCoverageTests
         // /api/search and the context service.
         calls.ShouldBeGreaterThanOrEqualTo(3, "the scan found fewer SearchAsync calls than the three callers that exist");
         problems.ShouldBeEmpty("a search that does not name its surface is recorded as Other: " + string.Join("; ", problems));
+    }
+
+    /// <summary>The text from the bracket at <paramref name="open"/> to its match, brackets of the same kind counted.</summary>
+    private static string Between(string text, int open, char opening, char closing)
+    {
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == opening) depth++;
+            else if (text[i] == closing && --depth == 0) return text[open..(i + 1)];
+        }
+
+        return text[open..];
     }
 }
