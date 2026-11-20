@@ -49,18 +49,4 @@ public sealed class CatalogQueryWarningTests
         job.FilesDone.ShouldBeGreaterThan(0, "the pass read the file, so the query that loads the corpus has run");
         log.Warnings.ShouldBeEmpty();
     }
-
-    [Fact]
-    public async Task AnExportOfACorpusWithSeveralSourcesAndChunkSetsLogsNoWarning()
-    {
-        var log = new WarningLog();
-        await using var harness = await IndexingHarness.StartWithLogsAsync(log, "a", "b");
-        await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
-        await using var db = harness.NewContext();
-
-        var export = await Dexicon.Api.ConfigEndpoints.BuildAsync(db, DateTime.UtcNow, "test", TestContext.Current.CancellationToken);
-
-        export.Corpora.ShouldHaveSingleItem().Sources.Count.ShouldBe(2, "the query that loads the corpus has run, and run once for each source");
-        log.Warnings.ShouldBeEmpty();
-    }
 }

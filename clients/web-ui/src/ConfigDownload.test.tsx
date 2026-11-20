@@ -74,6 +74,24 @@ describe('the download', () => {
 
     await vi.waitFor(() => expect(downloads).toHaveLength(1));
     expect(screen.queryByText('Left out of the file')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download configuration' }), 'the screen is still there').toBeEnabled();
+  });
+
+  it('releases the address after the click has been handled and not inside it', async () => {
+    exportConfig.mockResolvedValue({ format: 'dexicon-config', version: 1, omitted: [] });
+    // What the count of releases is a microtask after the click: a release made in the same call as the click is in it.
+    const revokedAfterClick: number[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push({ name: this.download, href: this.href });
+      queueMicrotask(() => revokedAfterClick.push(vi.mocked(URL.revokeObjectURL).mock.calls.length));
+    });
+    const user = userEvent.setup();
+    render(<ConfigDownload />);
+
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+
+    await vi.waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test'));
+    expect(revokedAfterClick).toEqual([0]);
   });
 
   it('clears what the last file left out when the next download fails', async () => {

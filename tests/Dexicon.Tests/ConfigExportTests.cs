@@ -11,7 +11,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Dexicon.Tests;
 
@@ -431,6 +433,50 @@ public sealed class ConfigExportTests : IAsyncLifetime
         var result = await ConfigEndpoints.ExportAsync(new DefaultHttpContext(), rc, db, TimeProvider.System, TestContext.Current.CancellationToken);
 
         ((IStatusCodeHttpResult)result).StatusCode.ShouldBe(403);
+    }
+}
+
+/// <summary>
+/// How the corpora are read. One joined statement over a corpus's sources and chunk sets returns each source once for every
+/// chunk set, and Entity Framework Core warns about it once per query shape per process, so a test that waits for the
+/// warning passes or fails by which test ran first. The statements issued are counted instead.
+/// </summary>
+public sealed class ConfigExportQueryTests
+{
+    private sealed class Statements : DbCommandInterceptor
+    {
+        public List<string> Text { get; } = [];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            lock (Text) Text.Add(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ACorpusIsLoadedWithItsSourcesAndChunkSetsAsSeparateStatements()
+    {
+        var statements = new Statements();
+        await using var harness = await IndexingHarness.StartAsync(statements, "a", "b");
+        await harness.SeedCorpusAsync(SourceKind.Workspace, sets: 2);
+        await using var db = harness.NewContext();
+        lock (statements.Text) statements.Text.Clear();
+
+        var export = await ConfigEndpoints.BuildAsync(db, DateTime.UtcNow, "test", TestContext.Current.CancellationToken);
+
+        export.Corpora.ShouldHaveSingleItem().Sources.Count.ShouldBe(2);
+        export.Corpora[0].ChunkSets.Count.ShouldBe(2);
+        lock (statements.Text)
+        {
+            // A split query reads each collection by a statement of its own, joined back to the corpora.
+            statements.Text.Count(t => t.Contains("\"sources\"", StringComparison.Ordinal)).ShouldBe(1, "sources are read by one statement");
+            statements.Text.Count(t => t.Contains("\"chunk_sets\"", StringComparison.Ordinal)).ShouldBe(1, "chunk sets by another");
+            statements.Text.ShouldNotContain(
+                t => t.Contains("\"sources\"", StringComparison.Ordinal) && t.Contains("\"chunk_sets\"", StringComparison.Ordinal),
+                "one statement joining both returns each source once for every chunk set");
+        }
     }
 }
 
