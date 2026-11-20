@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SearchesView, queryFor, score, whatWasAsked } from './Searches';
@@ -279,13 +279,17 @@ describe('the searches screen, branch by branch', () => {
   });
 
   it('keeps the rows it has when it loads older ones, and drops them when a filter changes', async () => {
-    listSearches.mockResolvedValueOnce(page([item({ id: 900, query: 'the newest one', queryChars: 14 })], { nextBefore: 900, matching: 2 }));
-    listSearches.mockResolvedValueOnce(page([item({ id: 12, query: 'an older one', queryChars: 12 })], { matching: 2 }));
+    listSearches.mockResolvedValueOnce(page([item({ id: 900, query: 'the newest one', queryChars: 14 })], { nextBefore: 900, matching: 3 }));
+    listSearches.mockResolvedValueOnce(page([item({ id: 12, query: 'an older one', queryChars: 12 })], { nextBefore: 12, matching: 3 }));
+    listSearches.mockResolvedValueOnce(page([item({ id: 3, query: 'the oldest one', queryChars: 14 })], { matching: 3 }));
     const user = userEvent.setup();
     render(<SearchesView onError={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Older searches' }));
     expect(await screen.findByText('an older one')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Older searches' }));
+    expect(await screen.findByText('the oldest one')).toBeInTheDocument();
+    expect(screen.getByText('an older one')).toBeInTheDocument();
     expect(screen.getByText('the newest one')).toBeInTheDocument();
 
     listSearches.mockResolvedValue(page([item({ id: 950, query: 'a filtered one', queryChars: 14 })]));
@@ -318,9 +322,9 @@ describe('the searches screen, branch by branch', () => {
 
     await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
     expect(await screen.findByText('the filtered answer')).toBeInTheDocument();
-    releaseFirst(page([item({ query: 'the stale answer', queryChars: 16 })]));
+    await act(async () => { releaseFirst(page([item({ query: 'the stale answer', queryChars: 16 })])); });
 
-    await vi.waitFor(() => expect(listSearches).toHaveBeenCalledTimes(2));
+    expect(listSearches).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('the stale answer')).not.toBeInTheDocument();
     expect(screen.getByText('the filtered answer')).toBeInTheDocument();
   });
