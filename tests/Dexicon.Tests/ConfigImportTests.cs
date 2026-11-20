@@ -216,6 +216,59 @@ public sealed class ConfigImportTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ASourceThatDiffersOnlyInItsGitignoreSettingIsUpdated()
+    {
+        await RunAsync(File(Corpus("Papers", [Source("notes", new ExportedFilters(null, null, UseGitignore: true, null))])), apply: true);
+
+        var result = await RunAsync(File(Corpus("Papers", [Source("notes", new ExportedFilters(null, null, UseGitignore: false, null))])), apply: true);
+
+        Outcomes(result, "source").ShouldBe("Papers: workspace notes=update");
+        (await StoredAsync("Papers")).Sources.Single().UseGitignore.ShouldBe(false);
+    }
+
+    [Fact]
+    public async Task ASourceThatDiffersOnlyInItsSizeCapIsUpdated()
+    {
+        await RunAsync(File(Corpus("Papers", [Source("notes", new ExportedFilters(null, null, null, MaxFileBytes: 100))])), apply: true);
+
+        var result = await RunAsync(File(Corpus("Papers", [Source("notes", new ExportedFilters(null, null, null, MaxFileBytes: 200))])), apply: true);
+
+        Outcomes(result, "source").ShouldBe("Papers: workspace notes=update");
+        (await StoredAsync("Papers")).Sources.Single().MaxFileBytes.ShouldBe(200);
+    }
+
+    [Fact]
+    public async Task AChunkSetHereThatDiffersFromTheFilesIsReportedAndLeftAlone()
+    {
+        await RunAsync(File(Corpus("Papers", sets: [Set(size: 256)])), apply: true);
+
+        var bigger = await RunAsync(File(Corpus("Papers", sets: [Set(size: 512)])), apply: true);
+        var overlap = await RunAsync(File(Corpus("Papers", sets: [Set(size: 256, overlap: 16)])), apply: true);
+        var mode = await RunAsync(File(Corpus("Papers", sets: [Set(size: 256, mode: "blank-line")])), apply: true);
+
+        foreach (var result in new[] { bigger, overlap, mode })
+        {
+            var item = result.Items.Single(i => i.Kind == "chunk set");
+            item.Outcome.ShouldBe("not imported");
+            item.Detail.ShouldNotBeNull().ShouldContain("differs from the set here");
+        }
+
+        var stored = (await StoredAsync("Papers")).ChunkSets.ShouldHaveSingleItem();
+        (stored.ChunkSize, stored.ChunkOverlap, stored.BoundaryMode).ShouldBe((256, 32, "language-aware"), "import changed nothing about the set");
+    }
+
+    [Fact]
+    public async Task AFileWithAFilterBlockLeftOutIsReadAsOneThatSetsNone()
+    {
+        var bare = new ExportedCorpus("Bare", null, null!, [new ExportedSource("workspace", "notes", null!, null)], [Set()]);
+
+        var result = await RunAsync(File(bare), apply: true);
+
+        Outcomes(result, "corpus").ShouldBe("Bare=create");
+        Outcomes(result, "source").ShouldBe("Bare: workspace notes=create");
+    }
+
+    [Fact]
     public async Task ADescriptionTheFileLeavesOutIsNotCleared()
     {
         await RunAsync(File(Corpus("Papers", description: "keep me")), apply: true);
@@ -289,7 +342,8 @@ public sealed class ConfigImportTests : IAsyncLifetime
         var result = await RunAsync(file, apply: true);
 
         Outcomes(result, "corpus").ShouldBe("First=create,Bad:Name=refused,Third=create");
-        result.Items.Single(i => i.Outcome == "refused").Detail.ShouldNotBeNull().ShouldContain("':'");
+        result.Items.Single(i => i.Outcome == "refused").Detail.ShouldNotBeNull().ShouldContain("Colon separates corpus from chunk set", Case.Sensitive,
+            "the refusal carries its reason and not only its title");
         await using var db = _harness.NewContext();
         (await db.Corpora.Select(c => c.Name).OrderBy(n => n).ToListAsync(TestContext.Current.CancellationToken)).ShouldBe(["First", "Third"]);
         Outcomes(result, "source").ShouldNotContain("Bad:Name", Case.Sensitive, "the sources of a corpus that was not made are not tried");
@@ -342,6 +396,8 @@ public sealed class ConfigImportTests : IAsyncLifetime
 
         Outcomes(result, "source").ShouldBe("Papers: workspace notes=unchanged,Papers: githistory notes=refused",
             "the history source is not taken for the file source on the same folder");
+        result.Items.Single(i => i.Name == "Papers: githistory notes").Detail.ShouldNotBeNull()
+            .ShouldNotContain("Not a git-history source", Case.Sensitive, "it was added as a new source and refused as one, and not matched to the file source and refused as a change to it");
     }
 
     [Theory]
