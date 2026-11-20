@@ -63,6 +63,12 @@ public sealed class CorpusConfiguration(
     private IndexingOptions Indexing => opts.Value.Indexing;
 
     /// <summary>
+    /// A workspace path in the spelling a source's root is stored and compared in (<see cref="WorkspaceDiscovery.Canonical"/>
+    /// against this instance's workspace root), so a caller can tell whether two spellings name one folder.
+    /// </summary>
+    public string CanonicalRoot(string? path) => WorkspaceDiscovery.Canonical(Indexing.WorkspaceRoot, path);
+
+    /// <summary>
     /// What an MCP tool says for a path the workspace resolver refused. The resolver's message names where a
     /// link leads, which is the host's own path.
     /// </summary>

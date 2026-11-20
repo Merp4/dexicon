@@ -5,8 +5,8 @@ import { Badge, Button, ErrorBanner, Modal, Notice, Spinner, type Tone } from '.
 
 /**
  * A configuration file read into this instance. The file is checked first, which changes nothing and lists what applying it
- * would do; applying is a second step that asks. It adds corpora and sources and updates the filters of those that are there, and
- * it never removes one. See D-54.
+ * would do; applying is a second step that asks. It adds corpora and sources and updates the filters of those that are there. It
+ * deletes none of them, though a narrower filter removes the files it excludes from the index. See D-54.
  */
 
 const TONE: Record<string, Tone> = {
@@ -72,8 +72,9 @@ export function ConfigUpload() {
       <h2 className="mt-0 mx-0 mb-3 text-base">Import configuration</h2>
       <p className="mt-0 mb-3 text-sm text-muted-foreground">
         Read a configuration file into this instance. Checking it changes nothing and lists what applying would do. Applying adds
-        the corpora and sources that are missing and updates the filters of those that are there. It removes nothing, and it does
-        not read chunk sets beyond a new corpus's default, keys or model profiles.
+        the corpora and sources that are missing and updates the filters of those that are there. It deletes no corpus, source or
+        chunk set, but a narrower filter removes the files it excludes from the index at the refresh. It does not read chunk sets
+        beyond a new corpus's default, keys or model profiles.
       </p>
 
       <input
@@ -81,6 +82,7 @@ export function ConfigUpload() {
         type="file"
         accept=".json,application/json"
         aria-label="Configuration file"
+        disabled={busy !== null}
         className="mb-3 block text-sm"
         onChange={(e) => void choose(e)}
       />
@@ -113,9 +115,10 @@ export function ConfigUpload() {
       {confirming && (
         <Modal title="Apply this file?" onClose={() => setConfirming(false)}>
           <p className="mt-0 text-sm">
-            {queues} {queues === 1 ? 'item makes' : 'items make'} a change, and each change queues the same refresh as making it by hand,
-            which on a large instance is a lot of indexing. Nothing is removed. It cannot be undone as a whole: what it makes is removed
-            through the removal paths, and an update is changed back by applying the earlier file.
+            {queues} {queues === 1 ? 'item makes' : 'items make'} a change. Adding or changing a source, or a corpus's default filters,
+            queues the same refresh as making the change by hand, which on a large instance is a lot of indexing, and a narrower filter
+            removes the files it excludes from the index. No corpus, source or chunk set is deleted. It cannot be undone as a whole:
+            what it makes is removed through the removal paths, and an update is changed back by applying the earlier file.
           </p>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setConfirming(false)}>Cancel</Button>

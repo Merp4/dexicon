@@ -3129,6 +3129,8 @@ secret exists only as a hash) and no admin password. No uploaded document: an up
 
 The file is read by the import ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-and-nothing-is-removed)).
 
+---
+
 ### D-54 A configuration file can be read into an instance, and nothing is removed
 
 **Status.** Accepted and implemented, 2026-11-20. Not yet released.
@@ -3140,11 +3142,14 @@ that the file does not name. An item has a `kind`, a `name`, an `outcome` and a 
 (made, or with a dry run would be), `unchanged`, `not imported`, `extra`, `refused` and `failed`, and the answer counts them.
 
 - A corpus is matched by name, ignoring case. One that is not here is made with `CorpusConfiguration.CreateCorpusAsync`, with
-  the file's description and default filters and a default chunk set taken from the file's default set (its provider, model,
-  chunk size, overlap and boundary mode). The embedding model is probed, as for any corpus.
+  the file's description and default filters and a default chunk set taken from the file's default set, or the first by name
+  when none is marked (its provider, model, chunk size, overlap and boundary mode). The embedding model is probed, as for any
+  corpus. A name is trimmed, as the create request trims it.
 - A corpus that is here has its description, when the file has one, and its default filters updated with `UpdateCorpusAsync`.
-  A file with no description leaves the one here alone.
-- A source is matched by its kind and its root. One that is here is updated with `UpdateSourceAsync`, and a value the file leaves
+  A file with no description leaves the one here alone. The update replaces all four default filters with the file's four, so a
+  file that sets none clears them, and the item names the filters that differ.
+- A source is matched by its kind and its root, compared in the spelling a source is stored in (`docs/.` and `x/../docs` are
+  `docs`; case is ignored only where the filesystem ignores it). One that is here is updated with `UpdateSourceAsync`, and a value the file leaves
   unset that the source sets is cleared, so the source inherits as the file says. One that is not here is added with
   `AddSourceAsync`. A list that is `null` in the file inherits, and one that is `[]` selects or excludes nothing; both are kept.
 - Each change goes through those methods, so it is judged by the rules the screens and the agents' tools are judged by. A change
@@ -3153,8 +3158,8 @@ that the file does not name. An item has a `kind`, a `name`, an `outcome` and a 
 
 **What it does not do.**
 
-- It deletes nothing. A corpus or source here that the file does not name is reported as `extra` and left alone. Removal stays
-  with the approval and `destroy` paths ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides),
+- It deletes no corpus, source or chunk set. A corpus or source here that the file does not name is reported as `extra` and left
+  alone. Removal stays with the approval and `destroy` paths ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides),
   [D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)).
 - It reads one chunk set, the default set of a corpus it makes. A set that is here is compared and reported `unchanged` or
   `not imported` when it differs. A set that is not here is `not imported`, because adding one starts a backfill. The boundary
@@ -3169,16 +3174,27 @@ smaller than the instance from removing what it does not mention.
 
 **Consequences.**
 
-- Applying a file to an instance that holds data queues a refresh for each corpus whose sources or default filters change, and
-  one for each source added. On a large instance that is hours of work. The dry run marks the items that queue one.
+- Applying a file to an instance that holds data queues a refresh for each source added or changed, and one for each corpus
+  whose default filters change and that has sources. On a large instance that is hours of work. A filter that is narrower than
+  the one it replaces removes the files it now excludes from the index when the refresh runs, as it does from a screen
+  ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)); the items for a filter change say so.
 - An apply cannot be undone as a whole. What it made is removed through the removal paths, and an update is changed back by
   applying the file that held the earlier values.
-- Items are in the order of the file, so a file written by the export is in name order. A file written by hand can leave out a
-  list or a block of filters, and is read as having none of it. A file of another `format` or `version`, a corpus with no name
-  and a corpus named twice (ignoring case) refuse the whole file before anything is made.
+- Items follow the file: each corpus, then its sources in the file's order and its chunk sets by name, and the corpora and
+  sources here that the file does not name after them. A file written by the export is in name order. A file written by hand
+  can leave out a list or a block of filters, and is read as having none of it.
+- These refuse the whole file (400) before anything is made: another `format` or `version`, a null entry in any list, a corpus
+  with no name or named twice (ignoring case and surrounding space), a source with no `rootPath` or with a kind other than
+  `workspace` or `githistory`, and a corpus that lists one source twice under spellings of one folder.
+- A step that fails for a reason that is not a rule is reported `failed`, and the catalogue is read again before the next corpus, so
+  what the failed step left tracked is not saved with it.
 
 **Revisit when** keys or chunk sets are to be read: the first needs a way to make a key without a secret and give it one on the
 Access page, and the second needs chunk set creation out of its endpoint.
+
+---
+
+## Resolved questions
 
 | # | Question | Needed by | Current lean |
 |---|---|---|---|

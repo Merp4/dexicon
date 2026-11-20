@@ -276,7 +276,7 @@ export const api = {
   /** The configuration of this instance as a file's content: names, settings and each key's reach, with no secret. Admin only. */
   exportConfig: () => call(() => getApiConfigExport()),
 
-  /** Reads a configuration file into this instance. A dry run unless `apply`, and it removes nothing. Admin only. */
+  /** Reads a configuration file into this instance. A dry run unless `apply`, and it deletes no corpus, source or chunk set. Admin only. */
   importConfig: (body: ConfigExport, apply = false) => call(() => postApiConfigImport({ body, query: { apply } })),
 
   getCorpus: (nameOrId: string) => call(() => getApiCorporaByNameOrId({ path: { nameOrId } })),

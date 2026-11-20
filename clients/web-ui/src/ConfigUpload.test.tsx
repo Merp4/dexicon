@@ -45,6 +45,11 @@ describe('the summary', () => {
       .toBe('2 create, 4 unchanged, 3 not imported, 5 refused, 1 failed');
   });
 
+  it('puts a create before an update and leaves out a count of nothing', () => {
+    expect(summary({ update: 1, create: 1 })).toBe('1 create, 1 update');
+    expect(summary({ create: 0, update: 1 })).toBe('1 update');
+  });
+
   it('says so when the file held nothing', () => {
     expect(summary({})).toBe('nothing in the file');
   });
@@ -88,7 +93,8 @@ describe('the import screen', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/2 items make a change/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Nothing is removed/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/No corpus, source or chunk set is deleted/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/a narrower filter\s+removes the files it excludes from the index/)).toBeInTheDocument();
     expect(importConfig).toHaveBeenCalledTimes(1);
 
     importConfig.mockResolvedValueOnce(plan({ applied: true, counts: { create: 2 } }));
@@ -174,5 +180,89 @@ describe('the import screen', () => {
 
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Check the file' })).toBeEnabled();
+  });
+
+  it('keeps the file chooser disabled while a request runs, so a late answer cannot belong to another file', async () => {
+    let answer: (r: ConfigImportResult) => void = () => {};
+    importConfig.mockReturnValueOnce(new Promise<ConfigImportResult>((resolve) => { answer = resolve; }));
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+
+    expect(screen.getByLabelText('Configuration file')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    answer(plan());
+    await screen.findByText(/Checked, nothing changed/);
+    expect(screen.getByLabelText('Configuration file')).toBeEnabled();
+  });
+
+  it('tones each outcome: changes accent, what is left as it is neutral, a refusal warn and a failure danger', async () => {
+    const items = ['create', 'update', 'unchanged', 'not imported', 'extra', 'refused', 'failed'].map((outcome) => ({
+      kind: 'corpus', name: `corpus ${outcome}`, outcome, detail: null,
+    }));
+    importConfig.mockResolvedValueOnce(plan({ items }));
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+    const list = await screen.findByRole('list', { name: 'What the file does' });
+
+    const tone = (outcome: string) => within(within(list).getByText(`corpus ${outcome}`).closest('li') as HTMLElement).getByText(outcome).className;
+    expect(tone('create')).toMatch(/accent/);
+    expect(tone('update')).toMatch(/accent/);
+    expect(tone('unchanged')).toMatch(/bg-muted/);
+    expect(tone('not imported')).toMatch(/bg-muted/);
+    expect(tone('extra')).toMatch(/bg-muted/);
+    expect(tone('refused')).toMatch(/warn/);
+    expect(tone('failed')).toMatch(/danger/);
+  });
+
+  it('counts the items that change something and says it in the singular for one', async () => {
+    importConfig.mockResolvedValueOnce(plan({
+      counts: { create: 1, unchanged: 1 },
+      items: [
+        { kind: 'corpus', name: 'Papers', outcome: 'create', detail: null },
+        { kind: 'corpus', name: 'Notes', outcome: 'unchanged', detail: null },
+      ],
+    }));
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+    await screen.findByText(/Checked, nothing changed/);
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(within(await screen.findByRole('dialog')).getByText(/1 item makes a change/)).toBeInTheDocument();
+  });
+
+  it('counts an update with the creates', async () => {
+    importConfig.mockResolvedValueOnce(plan({
+      counts: { update: 1 },
+      items: [{ kind: 'source', name: 'Papers: workspace notes', outcome: 'update', detail: null }],
+    }));
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+    await screen.findByText(/Checked, nothing changed/);
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(within(await screen.findByRole('dialog')).getByText(/1 item makes a change/)).toBeInTheDocument();
+  });
+
+  it('does not take a file that holds JSON null for a configuration file', async () => {
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+
+    await upload(user, 'null');
+
+    expect(await screen.findByText(/is not a JSON configuration file/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeDisabled();
   });
 });
