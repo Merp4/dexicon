@@ -393,6 +393,16 @@ fewer keeps them without limit). `DEXICON__SEARCHLOG__STOREQUERYTEXT=false` keep
 by deleting rows from `search_log`. Scrub a backup before it leaves this machine, as for any file that holds what was
 indexed.
 
+## What the configuration file holds
+
+`GET /api/config/export` and the Settings button write the configuration as one JSON file
+([D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file)). It holds the name, scopes, reach and expiry of every key
+that is not revoked, the workspace path of every source, the filters and options of each, and the templates and notes of every
+saved model profile. It holds no key secret and no hash (a secret exists only as a hash in the catalogue), no admin password, no id
+and no indexed content. Text typed into a description, a note, a template or a boundary pattern is written as typed, so a secret
+pasted into one is in the file. Only an administrator can fetch it, and the response is marked `Cache-Control: no-store`. Treat a
+saved copy as you treat the Access page.
+
 ## Repository files, present at first push
 
 `SECURITY.md` (how to report, expected response time, supported versions) ·

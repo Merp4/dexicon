@@ -3082,6 +3082,53 @@ and the corpora are stored by the names they had then, with no foreign key, so a
 **Revisit when** the table at the default retention is large enough to slow the screen, or when a key should see its own
 searches.
 
+### D-53 The configuration can be downloaded as a file
+
+**Status.** Accepted and implemented, 2026-11-20 (#356). Not yet released.
+
+**Decision.** `GET /api/config/export` (admin only) returns the configuration as one JSON document, and the Settings screen
+downloads it. The document has `format` (`dexicon-config`), `version` (1), `exportedUtc`, `dexiconVersion` and four lists:
+
+- `corpora`: each with its name, description, default filters, sources and chunk sets. A source is `workspace` or `githistory`,
+  with its root path, the filters it sets for itself and, for history, its options. A chunk set has its provider, model, chunk
+  size and overlap, boundary mode and pattern, the `unitAware`, `sentenceAware` and `headingContext` flags and whether it is
+  the default.
+- `modelProfiles`: provider, model, document and query templates, notes.
+- `keys`: name, scopes, whether it reaches every corpus, the names of the corpora it reaches, and its expiry. A revoked key is
+  not exported. An expired key is.
+- `omitted`: one sentence for each corpus that holds uploaded documents, and for each stored setting that could not be read.
+  A glob list that will not parse is written as unset, and a history source whose options will not parse is left out.
+
+Everything is named and nothing is numbered. Corpora, chunk sets, profiles and keys are in name order ignoring case, sources are by kind (workspace first) and then root, and
+rows that tie are ordered by how they are written. Properties are in a fixed order, every property is written (an unset one as `null`, which is what the OpenAPI
+document says), and the text is indented, so two exports of one state differ only in `exportedUtc` and a diff of two files
+shows what changed. The response is a download and carries `Cache-Control: no-store`.
+
+**Why.** What is indexed, how it is cut and who may read it lived only in the catalogue, next to indexing state and uploaded
+files. Rebuilding an instance on another machine, reviewing a configuration change in git and comparing two instances meant
+reading the screens one by one. A file of names and settings can be read, diffed and kept.
+
+**What it does not hold.** No id, count, state, job, file, vector, canary or framing record. No token hash, no key secret (a
+secret exists only as a hash) and no admin password. No uploaded document: an upload source is left out of its corpus and
+`omitted` says which corpus holds uploads. A test checks the written text for each of these.
+
+**Consequences.**
+
+- A property that is `null` means the source or corpus inherits; an empty list of globs is written as `[]` and selects or
+  excludes nothing. The file keeps the two apart, as the catalogue does ([04](04-ingestion.md#sources): "Null and empty are different").
+- The file names every key with its scopes and reach, the workspace paths of every source and the templates of every saved
+  profile. Only an administrator can fetch it, and it is as sensitive as the Access page.
+- Free text is written as typed: a description, a profile's notes and templates and a custom boundary pattern. A secret pasted
+  into one is in the file.
+- The file's names are its own, and a create request names some differently: a source's `rootPath` is `workspacePath`, its
+  `kind` is the `gitHistory` flag, and a key's `expiresUtc` is `expiresInDays`. A reader of the file maps them.
+- A change to the layout that a reader of version 1 would misread raises `version`. Adding a property does not.
+- No migration and no schema change. The export reads corpora with their sources and chunk sets as split queries (one joined
+  query would return each source once for every chunk set of its corpus), then the profiles, then the keys with the corpora
+  they reach.
+
+**Revisit when** a reader of the file is built, since it is then the one place that says which properties have a reader.
+
 ---
 
 ## Resolved questions

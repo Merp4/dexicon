@@ -272,6 +272,25 @@
         }
       }
     },
+    "/api/config/export": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigExport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
@@ -1946,6 +1965,59 @@
           }
         }
       },
+      "ConfigExport": {
+        "required": [
+          "format",
+          "version",
+          "exportedUtc",
+          "dexiconVersion",
+          "corpora",
+          "modelProfiles",
+          "keys",
+          "omitted"
+        ],
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "exportedUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dexiconVersion": {
+            "type": "string"
+          },
+          "corpora": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedCorpus"
+            }
+          },
+          "modelProfiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedModelProfile"
+            }
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedKey"
+            }
+          },
+          "omitted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ConfiguredFilters": {
         "required": [
           "useGitignore",
@@ -2724,6 +2796,247 @@
             "items": {
               "$ref": "#/components/schemas/EmbeddingProviderInfo"
             }
+          }
+        }
+      },
+      "ExportedChunkSet": {
+        "required": [
+          "name",
+          "description",
+          "embeddingProvider",
+          "embeddingModel",
+          "chunkSize",
+          "chunkOverlap",
+          "boundaryMode",
+          "customBoundaryPattern",
+          "unitAware",
+          "sentenceAware",
+          "headingContext",
+          "isDefault"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "embeddingProvider": {
+            "type": "string"
+          },
+          "embeddingModel": {
+            "type": "string"
+          },
+          "chunkSize": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "chunkOverlap": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "boundaryMode": {
+            "type": "string"
+          },
+          "customBoundaryPattern": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "unitAware": {
+            "type": "boolean"
+          },
+          "sentenceAware": {
+            "type": "boolean"
+          },
+          "headingContext": {
+            "type": "boolean"
+          },
+          "isDefault": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExportedCorpus": {
+        "required": [
+          "name",
+          "description",
+          "defaults",
+          "sources",
+          "chunkSets"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ExportedFilters"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedSource"
+            }
+          },
+          "chunkSets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedChunkSet"
+            }
+          }
+        }
+      },
+      "ExportedFilters": {
+        "required": [
+          "includeGlobs",
+          "excludeGlobs",
+          "useGitignore",
+          "maxFileBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "includeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeGlobs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "useGitignore": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "maxFileBytes": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ExportedKey": {
+        "required": [
+          "name",
+          "scopes",
+          "allCorpora",
+          "corpora",
+          "expiresUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allCorpora": {
+            "type": "boolean"
+          },
+          "corpora": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expiresUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ExportedModelProfile": {
+        "required": [
+          "provider",
+          "model",
+          "documentTemplate",
+          "queryTemplate",
+          "notes"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "documentTemplate": {
+            "type": "string"
+          },
+          "queryTemplate": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ExportedSource": {
+        "required": [
+          "kind",
+          "rootPath",
+          "filters",
+          "git"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "rootPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "filters": {
+            "$ref": "#/components/schemas/ExportedFilters"
+          },
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GitHistoryOptions"
+              }
+            ]
           }
         }
       },
@@ -4795,6 +5108,9 @@
     },
     {
       "name": "Searches"
+    },
+    {
+      "name": "Config"
     },
     {
       "name": "Events"

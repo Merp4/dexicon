@@ -35,6 +35,7 @@ import {
   getApiCorporaByNameOrIdFile,
   getApiCorporaByNameOrIdCoverage,
   patchApiCorporaByNameOrIdSourcesBySourceId,
+  getApiConfigExport,
   getApiCorporaByNameOrIdFiles,
   getApiDocuments,
   getApiDocumentsBySha256Text,
@@ -266,6 +267,9 @@ export const api = {
   approveProposal: (id: string) => call(() => postApiProposalsByIdApprove({ path: { id } })),
 
   rejectProposal: (id: string) => call(() => postApiProposalsByIdReject({ path: { id } })),
+
+  /** The configuration of this instance as a file's content: names, settings and each key's reach, with no secret. Admin only. */
+  exportConfig: () => call(() => getApiConfigExport()),
 
   getCorpus: (nameOrId: string) => call(() => getApiCorporaByNameOrId({ path: { nameOrId } })),
 
