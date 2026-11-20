@@ -136,13 +136,13 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
     {
         await using (var db = _harness.NewContext())
         {
-            for (var i = 0; i < SearchLogEndpoints.MaxLimit + 5; i++) Row(db, At.AddHours(1), "bulk", SearchSurface.Api, "docs", hits: 1);
+            for (var i = 0; i < 205; i++) Row(db, At.AddHours(1), "bulk", SearchSurface.Api, "docs", hits: 1);
             await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var page = await PageAsync(limit: 100_000);
 
-        page.Items.Count.ShouldBe(SearchLogEndpoints.MaxLimit);
+        page.Items.Count.ShouldBe(200, "a page holds at most 200 rows");
         page.NextBefore.ShouldNotBeNull();
     }
 

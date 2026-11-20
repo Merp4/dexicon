@@ -435,18 +435,24 @@ public sealed class SearchLogTests : IAsyncLifetime
         try
         {
             for (var i = 0; i < 250; i++)
-                log.Record(new SearchLogRow { TokenId = "k", TokenName = "agent", Corpora = "notes", Mode = "keyword", AtUtc = now.UtcDateTime });
+                log.Record(new SearchLogRow { TokenId = "k", TokenName = "queued", Corpora = "notes", Mode = "keyword", AtUtc = now.UtcDateTime });
 
-            // 250 written and the 45 day old row gone, leaving the 2 day old one: 251. Waited for, not slept for.
-            var rows = 0;
-            for (var attempt = 0; attempt < 100 && rows != 251; attempt++)
+            // The end state: all 250 queued rows written and the 45 day old row gone, leaving the 2 day old one. The
+            // total passes through 251 on the way (the old row and 249 of the new), so the wait is for both facts.
+            var cutoff = now.UtcDateTime.AddDays(-30);
+            (int Queued, bool Stale) seen = (0, true);
+            for (var attempt = 0; attempt < 100 && (seen.Queued != 250 || seen.Stale); attempt++)
             {
                 await using var db = _harness.NewContext();
-                rows = await db.SearchLog.CountAsync(TestContext.Current.CancellationToken);
-                if (rows != 251) await Task.Delay(100, TestContext.Current.CancellationToken);
+                seen = (await db.SearchLog.CountAsync(r => r.TokenName == "queued", TestContext.Current.CancellationToken),
+                        await db.SearchLog.AnyAsync(r => r.AtUtc < cutoff, TestContext.Current.CancellationToken));
+                if (seen.Queued != 250 || seen.Stale) await Task.Delay(100, TestContext.Current.CancellationToken);
             }
 
-            rows.ShouldBe(251);
+            seen.Queued.ShouldBe(250);
+            seen.Stale.ShouldBeFalse("the 45 day old row was removed by the prune at start");
+            await using var final = _harness.NewContext();
+            (await final.SearchLog.CountAsync(TestContext.Current.CancellationToken)).ShouldBe(251);
         }
         finally
         {
