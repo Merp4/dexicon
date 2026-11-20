@@ -103,6 +103,10 @@ builder.Services.AddSingleton<LoginThrottle>();
 
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<ScopeResolver>();
+// Singleton: the queue belongs to the process, and the writer drains it. SearchService takes it as ISearchLog.
+builder.Services.AddSingleton<SearchLog>();
+builder.Services.AddSingleton<ISearchLog>(sp => sp.GetRequiredService<SearchLog>());
+builder.Services.AddHostedService<SearchLogWriter>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ContextService>();
 builder.Services.AddScoped<CorpusIndexer>();
@@ -213,6 +217,7 @@ app.MapCorpusEndpoints();
 app.MapChunkSetEndpoints();
 app.MapDocumentEndpoints();
 app.MapJobEndpoints();
+app.MapSearchLogEndpoints();
 app.MapProposalEndpoints();
 app.MapEventEndpoints();
 app.MapWorkspaceEndpoints();

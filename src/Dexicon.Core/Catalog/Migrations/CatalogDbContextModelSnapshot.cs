@@ -15,7 +15,7 @@ namespace Dexicon.Core.Catalog.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
 
             modelBuilder.Entity("Dexicon.Core.Catalog.AdminCredential", b =>
                 {
@@ -627,6 +627,71 @@ namespace Dexicon.Core.Catalog.Migrations
                     b.HasIndex("Kind", "TargetId", "Status");
 
                     b.ToTable("proposals", (string)null);
+                });
+
+            modelBuilder.Entity("Dexicon.Core.Catalog.SearchLogRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("AtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Corpora")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Degraded")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Hits")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Noted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Query")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("QueryChars")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Surface")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("TookMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<float?>("TopScore")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtUtc");
+
+                    b.HasIndex("Hits", "Id");
+
+                    b.ToTable("search_log", (string)null);
                 });
 
             modelBuilder.Entity("Dexicon.Core.Catalog.Source", b =>

@@ -378,6 +378,21 @@ Two things limit what a transcript corpus exposes. A source can leave a project 
 directory name, and removing the source removes its documents and vectors. Neither changes a transcript on disk, which
 Dexicon reads and never writes.
 
+## What the search log holds
+
+The catalogue keeps a row for each search that ran ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)):
+who asked, by which surface, the query text cut at 500 characters, how many hits came back and how long it took. The
+per-prompt hook ([12](12-clients.md#hooks-for-claude-code)), where it is registered, sends every prompt it handles, in
+full, as the query, and an agent's own MCP queries are stored whether or not the hook is there, so rows hold what was typed
+into a prompt or a query, a pasted credential included. Only an administrator can read them, through the Searches
+screen or `GET /api/searches`, and a key cannot, whatever its scopes.
+
+The rows are in `catalog.db` and in every backup of it, for `DEXICON__SEARCHLOG__RETENTIONDAYS` days (30 by default; `0` or
+fewer keeps them without limit). `DEXICON__SEARCHLOG__STOREQUERYTEXT=false` keeps each query's length and drops its text, and
+`DEXICON__SEARCHLOG__ENABLED=false` records nothing. Neither removes rows already written: those leave with retention, or
+by deleting rows from `search_log`. Scrub a backup before it leaves this machine, as for any file that holds what was
+indexed.
+
 ## Repository files, present at first push
 
 `SECURITY.md` (how to report, expected response time, supported versions) ·

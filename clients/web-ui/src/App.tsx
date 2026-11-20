@@ -24,7 +24,7 @@ import {
   Notice, Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
-  ArrowLeft, Check, Database, FileText, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
+  ArrowLeft, Check, Database, FileText, History, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
   Search, Settings, ShieldCheck, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -44,6 +44,7 @@ import { DocumentsView } from './Documents';
 import { ChunkSetsPanel, ModelsView } from './ChunkSets';
 import { suggestedOverlap, usableChunkTokens } from './chunkLimits';
 import { ApprovalsView } from './Approvals';
+import { SearchesView } from './Searches';
 
 // The list and the parsing live in route.ts, so the URL and the switch below cannot
 // drift apart.
@@ -284,6 +285,7 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
     { id: 'corpora', label: 'Corpora', Icon: Database },
     { id: 'documents', label: 'Documents', Icon: FileText },
     { id: 'jobs', label: 'Jobs', Icon: ListChecks },
+    { id: 'searches', label: 'Searches', Icon: History },
     { id: 'approvals', label: 'Approvals', Icon: ShieldCheck },
     { id: 'models', label: 'Models', Icon: Sliders },
     { id: 'access', label: 'Access', Icon: Key },
@@ -361,6 +363,7 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
         {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
+        {view === 'searches' && <SearchesView onError={setError} />}
         {view === 'approvals' && (
           <ApprovalsView
             onError={setError}

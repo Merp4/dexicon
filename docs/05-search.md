@@ -415,6 +415,16 @@ thing, which is what resources are for, and D-11 treats the tool count as a budg
 agent pays on every turn. For workspace corpora an agent can usually read the real
 file faster anyway; this path exists for uploads and for agents without filesystem access.
 
+## The search log
+
+Every search that returns a result leaves one row in the catalogue, written after the result is built and off the request
+path: the key, the surface (`mcp`, `api` or `context`), the corpora, the mode that ran, the query, the hit count, the first
+hit's score, the time taken, whether it was degraded and whether the result carried a note. A search refused before it ran leaves none. An administrator reads
+the rows on the Searches screen ([08](08-ui.md#searches)) or through `GET /api/searches`; the score is in the units of the
+mode that ran, so it is compared within a mode. What the rows hold, how long they stay and how to stop keeping the text are
+in [D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record) and
+[10](10-security-secrets.md#what-the-search-log-holds).
+
 ## Performance
 
 | Component | Expectation |

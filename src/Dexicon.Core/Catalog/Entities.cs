@@ -712,3 +712,54 @@ public sealed class Proposal
     /// <summary>Why a proposal failed: what was no longer there when it was approved.</summary>
     public string? Error { get; set; }
 }
+
+/// <summary>Which door a search came in by. <see cref="Other"/> is a caller that did not say, and reads as a defect in the log.</summary>
+public enum SearchSurface { Other = 0, Api = 1, Mcp = 2, Context = 3 }
+
+/// <summary>
+/// One search that ran: who asked, where, what and how it went, written after the result is built.
+/// A search that was refused before it ran (an unknown corpus, an empty scope) is not a row.
+///
+/// No foreign keys, for the reason <see cref="Proposal"/> has none: it records what was asked and has to
+/// outlive the key and the corpora it names, so both are kept as the names they had then. The id is
+/// assigned in arrival order and is what a page of the list continues from.
+/// </summary>
+public sealed class SearchLogRow
+{
+    public long Id { get; set; }
+    public DateTime AtUtc { get; set; }
+
+    public required string TokenId { get; set; }
+    public required string TokenName { get; set; }
+
+    public SearchSurface Surface { get; set; }
+
+    /// <summary>The corpora searched, as the caller names them (<c>books</c> or <c>books:fine</c>), comma separated.</summary>
+    public required string Corpora { get; set; }
+
+    /// <summary>The mode that ran: keyword when a search asked for more and embeddings were unavailable (see <see cref="Degraded"/>).</summary>
+    public required string Mode { get; set; }
+
+    /// <summary>
+    /// The query that ran, cut at <see cref="Search.SearchLog.MaxQueryChars"/> characters. Null when
+    /// <c>DEXICON__SEARCHLOG__STOREQUERYTEXT</c> is off.
+    /// </summary>
+    public string? Query { get; set; }
+
+    /// <summary>Length of the whole query in characters, kept when the text is not.</summary>
+    public int QueryChars { get; set; }
+
+    public int Hits { get; set; }
+
+    /// <summary>
+    /// The first hit's score, in the units of the mode that ran: a cosine for semantic, the fused value for
+    /// hybrid, the sparse match for keyword. Null with no hits. Not comparable across modes.
+    /// </summary>
+    public float? TopScore { get; set; }
+
+    public long TookMs { get; set; }
+    public bool Degraded { get; set; }
+
+    /// <summary>The result carried a note (a corpus still indexing, unavailable, or short).</summary>
+    public bool Noted { get; set; }
+}

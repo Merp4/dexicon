@@ -63,6 +63,7 @@ public static class SystemEndpoints
                     : SearchRequest.DefaultMaxCharsPerHit,
                 DistinctTitles = body.DistinctTitles ?? true,
                 Phrase = body.Phrase,
+                Surface = SearchSurface.Api,
             }, ct);
 
             return Results.Ok(result);
