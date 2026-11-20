@@ -18,6 +18,7 @@ public sealed class DexiconOptions
     public AdminOptions Admin { get; init; } = new();
     public StorageOptions Storage { get; init; } = new();
     public LogOptions Log { get; init; } = new();
+    public SearchLogOptions SearchLog { get; init; } = new();
 }
 
 public sealed class QdrantOptions
@@ -328,6 +329,26 @@ public sealed class LogOptions
 {
     /// <summary>Trace | Debug | Information | Warning | Error</summary>
     public string Level { get; init; } = "Information";
+}
+
+/// <summary>
+/// The record of searches that ran, shown on the Searches screen. It holds what callers typed: the context
+/// hook sends each prompt in full, and the catalogue, and every backup of it, keeps the text for
+/// <see cref="RetentionDays"/> days. See docs/10-security-secrets.md.
+/// </summary>
+public sealed class SearchLogOptions
+{
+    /// <summary>False records nothing. Rows already written stay until retention removes them.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// False keeps each search's length, scores and timing and drops its text. The Searches screen then
+    /// cannot say what was asked.
+    /// </summary>
+    public bool StoreQueryText { get; init; } = true;
+
+    /// <summary>Days a row is kept, counted from the search. 0 keeps every row, and the table then grows without bound.</summary>
+    public int RetentionDays { get; init; } = 30;
 }
 
 public sealed class StorageOptions

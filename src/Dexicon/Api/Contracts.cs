@@ -763,3 +763,35 @@ public static class Mapping
         return line.Length > 40 ? line[..40] + "..." : line;
     }
 }
+
+/// <summary>One search that ran. See <see cref="SearchLogRow"/> for what each field holds.</summary>
+public sealed record SearchLogItem(
+    long Id,
+    DateTime AtUtc,
+    string KeyName,
+    SearchSurface Surface,
+    string Corpora,
+    string Mode,
+    string? Query,
+    int QueryChars,
+    int Hits,
+    float? TopScore,
+    long TookMs,
+    bool Degraded,
+    bool Noted);
+
+/// <summary>What the log is set to do, so the screen can say what it is showing and what it is not keeping.</summary>
+/// <param name="Dropped">Rows dropped since the host started: the queue was full or the catalogue refused the write.</param>
+public sealed record SearchLogSettings(bool Enabled, bool StoresQueryText, int RetentionDays, long Dropped);
+
+/// <summary>
+/// A page of the log, newest first. <paramref name="NextBefore"/> is the id to send as <c>before</c> for the next page,
+/// and null on the last one. <paramref name="Matching"/> counts every row the filters match, not only this page.
+/// <paramref name="OldestUtc"/> is the oldest row held at all, so the window the log covers is known.
+/// </summary>
+public sealed record SearchLogPage(
+    IReadOnlyList<SearchLogItem> Items,
+    long? NextBefore,
+    int Matching,
+    DateTime? OldestUtc,
+    SearchLogSettings Settings);

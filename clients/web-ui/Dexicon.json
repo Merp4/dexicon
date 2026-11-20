@@ -207,6 +207,71 @@
         }
       }
     },
+    "/api/searches": {
+      "get": {
+        "tags": [
+          "Searches"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "corpus",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "surface",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "noResults",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchLogPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
@@ -3946,6 +4011,141 @@
           }
         }
       },
+      "SearchLogItem": {
+        "required": [
+          "id",
+          "atUtc",
+          "keyName",
+          "surface",
+          "corpora",
+          "mode",
+          "query",
+          "queryChars",
+          "hits",
+          "topScore",
+          "tookMs",
+          "degraded",
+          "noted"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "atUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "keyName": {
+            "type": "string"
+          },
+          "surface": {
+            "$ref": "#/components/schemas/SearchSurface"
+          },
+          "corpora": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "query": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "queryChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hits": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "topScore": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "float"
+          },
+          "tookMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "noted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchLogPage": {
+        "required": [
+          "items",
+          "nextBefore",
+          "matching",
+          "oldestUtc",
+          "settings"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchLogItem"
+            }
+          },
+          "nextBefore": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "matching": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "oldestUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/SearchLogSettings"
+          }
+        }
+      },
+      "SearchLogSettings": {
+        "required": [
+          "enabled",
+          "storesQueryText",
+          "retentionDays",
+          "dropped"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "storesQueryText": {
+            "type": "boolean"
+          },
+          "retentionDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "SearchMode": {
         "enum": [
           "Hybrid",
@@ -4006,6 +4206,14 @@
             ]
           }
         }
+      },
+      "SearchSurface": {
+        "enum": [
+          "Other",
+          "Api",
+          "Mcp",
+          "Context"
+        ]
       },
       "SignInRequest": {
         "required": [
@@ -4584,6 +4792,9 @@
     },
     {
       "name": "System"
+    },
+    {
+      "name": "Searches"
     },
     {
       "name": "Events"

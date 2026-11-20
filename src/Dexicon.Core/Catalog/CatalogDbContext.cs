@@ -25,6 +25,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     public DbSet<FileText> FileTexts => Set<FileText>();
     public DbSet<IndexJob> Jobs => Set<IndexJob>();
     public DbSet<Proposal> Proposals => Set<Proposal>();
+    public DbSet<SearchLogRow> SearchLog => Set<SearchLogRow>();
 
     /// <summary>
     /// UTC everywhere, converted exactly once, at the edge that renders it.
@@ -272,6 +273,23 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             e.HasIndex(x => new { x.Status, x.CreatedUtc });
             e.HasIndex(x => new { x.TokenId, x.Status });
             e.HasIndex(x => new { x.Kind, x.TargetId, x.Status });
+        });
+
+        // No foreign keys, for the same reason as proposals. Indexed on the time for the retention prune and
+        // on the hit count for the list of searches that found nothing.
+        modelBuilder.Entity<SearchLogRow>(e =>
+        {
+            e.ToTable("search_log");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.TokenId).HasMaxLength(40).IsRequired();
+            e.Property(x => x.TokenName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Surface).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Corpora).HasMaxLength(Search.SearchLog.MaxCorporaChars).IsRequired();
+            e.Property(x => x.Mode).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Query).HasMaxLength(Search.SearchLog.MaxQueryChars);
+            e.HasIndex(x => x.AtUtc);
+            e.HasIndex(x => new { x.Hits, x.Id });
         });
     }
 }

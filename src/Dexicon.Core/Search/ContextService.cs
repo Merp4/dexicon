@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dexicon.Core.Auth;
+using Dexicon.Core.Catalog;
 using Dexicon.Core.Documents;
 using Dexicon.Core.Vectors;
 
@@ -120,6 +121,7 @@ public sealed class ContextService(
             Section = request.Section,
             DistinctTitles = request.DistinctTitles,
             Phrase = request.Phrase,
+            Surface = SearchSurface.Context,
 
             // Whole chunks. A search window is centred on the matching terms and sized for
             // judging a hit; what goes into a prompt is the passage that was embedded.

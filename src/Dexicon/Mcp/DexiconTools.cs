@@ -69,6 +69,7 @@ public sealed class DexiconTools
                 MaxCharsPerHit = Math.Clamp(maxCharsPerHit, 0, 100_000),
                 DistinctTitles = distinctTitles,
                 Phrase = phrase,
+                Surface = SearchSurface.Mcp,
             }, ct);
         }
         catch (ScopeResolutionException ex)

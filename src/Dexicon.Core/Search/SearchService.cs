@@ -61,6 +61,12 @@ public sealed record SearchRequest
     /// same query it always was.
     /// </summary>
     public string? Phrase { get; init; }
+
+    /// <summary>
+    /// Which door the search came in by, for the search log. Each caller sets its own; one that leaves it out is
+    /// recorded as <see cref="SearchSurface.Other"/>, which the Searches screen shows as a defect.
+    /// </summary>
+    public SearchSurface Surface { get; init; }
 }
 
 public sealed record SearchResult
@@ -89,8 +95,11 @@ public sealed class SearchService(
     IEmbeddingService embedder,
     IModelProfiles profiles,
     IMemoryCache cache,
-    ILogger<SearchService> log)
+    ILogger<SearchService> log,
+    ISearchLog? searchLog = null)
 {
+    private readonly ISearchLog _searchLog = searchLog ?? NullSearchLog.Instance;
+
     private static readonly TimeSpan QueryEmbeddingTtl = TimeSpan.FromMinutes(5);
 
     public async Task<SearchResult> SearchAsync(
@@ -268,6 +277,26 @@ public sealed class SearchService(
             notes.Add(termless);
 
         var note = notes.Count > 0 ? string.Join(" ", notes) : null;
+
+        // Recorded once the result exists, and from here only: this is the one place every search passes through
+        // (the MCP tool, /api/search and /api/context all call this method). A search refused above, for an
+        // unknown corpus or an empty scope, throws before it and leaves no row.
+        _searchLog.Record(new SearchLogRow
+        {
+            AtUtc = DateTime.UtcNow,
+            TokenId = principal.TokenId,
+            TokenName = principal.Name,
+            Surface = request.Surface,
+            Corpora = string.Join(",", scope.Targets.Select(t => t.QualifiedName)),
+            Mode = (degraded ? SearchMode.Keyword : request.Mode).ToString().ToLowerInvariant(),
+            Query = queryText,
+            QueryChars = queryText.Length,
+            Hits = ordered.Count,
+            TopScore = ordered.Count > 0 ? ordered[0].Score : null,
+            TookMs = sw.ElapsedMilliseconds,
+            Degraded = degraded,
+            Noted = note is not null,
+        });
 
         return new SearchResult
         {
