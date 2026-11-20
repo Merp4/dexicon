@@ -3099,8 +3099,8 @@ downloads it. The document has `format` (`dexicon-config`), `version` (1), `expo
 - `omitted`: one sentence for each corpus that holds uploaded documents, and for each stored setting that could not be read.
   A glob list that will not parse is written as unset, and a history source whose options will not parse is left out.
 
-Everything is named and nothing is numbered. Lists are in name order ignoring case, and rows that tie are ordered by how they
-are written. Properties are in a fixed order, every property is written (an unset one as `null`, which is what the OpenAPI
+Everything is named and nothing is numbered. Corpora, chunk sets, profiles and keys are in name order ignoring case, sources are by kind (workspace first) and then root, and
+rows that tie are ordered by how they are written. Properties are in a fixed order, every property is written (an unset one as `null`, which is what the OpenAPI
 document says), and the text is indented, so two exports of one state differ only in `exportedUtc` and a diff of two files
 shows what changed. The response is a download and carries `Cache-Control: no-store`.
 

@@ -6,7 +6,8 @@ import { Button, ErrorBanner, Notice, Spinner } from './ui';
 /**
  * The configuration as a file: corpora with their filters, sources and chunk sets, the saved model profiles, and each
  * key's name, scopes and reach. It names everything by name and holds no key secret, no id and no indexed content.
- * What this instance holds that the file leaves out (the uploaded documents of a corpus) is said under the button.
+ * What this instance holds that the file leaves out (the uploaded documents of a corpus, and any stored setting that could
+ * not be read) is said under the button.
  */
 
 /** The file's name: the day it was made, in the browser's calendar. */
@@ -67,7 +68,7 @@ export function ConfigDownload() {
         <Notice tone="neutral" className="mt-3">
           <p className="m-0 font-medium">Left out of the file</p>
           <ul className="m-0 mt-1 list-disc pl-5">
-            {omitted.map((line) => <li key={line}>{line}</li>)}
+            {omitted.map((line, i) => <li key={`${i}-${line}`}>{line}</li>)}
           </ul>
         </Notice>
       )}

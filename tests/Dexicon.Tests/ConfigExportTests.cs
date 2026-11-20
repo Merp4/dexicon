@@ -362,6 +362,9 @@ public sealed class ConfigExportTests : IAsyncLifetime
             var tokens = new TokenService(db, TimeProvider.System);
             db.Tokens.Add(tokens.Build("dup", [Scopes.Search], expiresUtc: null).Row);
             db.Tokens.Add(tokens.Build("dup", [Scopes.Ingest], expiresUtc: null).Row);
+
+            // Reaches both twins, the lower-case one first, which is the order the join returns them in.
+            db.Tokens.Add(tokens.Build("reach-twins", [Scopes.Search], expiresUtc: null, corpusIds: ["corpus-t1", "corpus-t2"]).Row);
             await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
@@ -369,7 +372,28 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
         export.Corpora.Select(c => c.Name).ShouldBe(["Archive", "notes", "Papers", "Twin", "twin"]);
         export.Keys.Where(k => k.Name == "dup").Select(k => k.Scopes.Single()).ShouldBe([Scopes.Ingest, Scopes.Search]);
+        export.Keys.Single(k => k.Name == "reach-twins").Corpora.ShouldBe(["Twin", "twin"]);
         Text(export).ShouldBe(Text(await ExportAsync()));
+    }
+
+    [Fact]
+    public async Task TheNotesFollowTheOrderOfTheCorporaNotTheOrderOfTheirText()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            // "Apple" sorts before "Berry", and its note ("The default ...") sorts after Berry's ("Corpus 'Berry' ...").
+            db.Corpora.Add(new Corpus { Id = "corpus-a", Name = "Apple", State = CorpusState.Ready, CreatedUtc = Now, DefaultIncludeGlobs = "oops" });
+            var berry = new Corpus { Id = "corpus-y", Name = "Berry", State = CorpusState.Ready, CreatedUtc = Now };
+            berry.Sources.Add(new Source { Id = "source-berry-up", CorpusId = "corpus-y", Kind = SourceKind.Upload, CreatedUtc = Now });
+            db.Corpora.Add(berry);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var omitted = (await ExportAsync()).Omitted;
+
+        // The corpus each note is about, which is the first quoted name in it.
+        omitted.Select(n => n.Split('\'')[1]).ShouldBe(["Apple", "Archive", "Berry", "Papers"],
+            "Apple's note, then the upload notes of Archive, Berry and Papers: the order of the corpora, not of the notes' text");
     }
 
     [Fact]
