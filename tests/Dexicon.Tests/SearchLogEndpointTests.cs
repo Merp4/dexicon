@@ -419,12 +419,16 @@ public sealed class SearchSurfaceCoverageTests
         foreach (var file in Directory.EnumerateFiles(Path.Combine(RepoRoot(), "src"), "*.cs", SearchOption.AllDirectories)
                      .Where(f => !f.Contains($"{sep}obj{sep}", StringComparison.Ordinal) && !f.Contains($"{sep}bin{sep}", StringComparison.Ordinal)))
         {
-            var text = File.ReadAllText(file);
+            // Comments and strings are blanked first, at the same length and with their line breaks kept, so a brace or a
+            // `new SearchRequest` inside either cannot move a bracket match or satisfy a check.
+            var text = Regex.Replace(File.ReadAllText(file), @"//[^\n]*|/\*.*?\*/|@""(?:[^""]|"""")*""|""(?:[^""\\\n]|\\.)*""",
+                m => new string([.. m.Value.Select(c => c == '\n' ? '\n' : ' ')]), RegexOptions.Singleline);
             string Where(int index) => $"{Path.GetFileName(file)}:{text[..index].Count(c => c == '\n') + 1}";
 
             // Every call of SearchAsync on any receiver: the vector store's takes a SearchQuery and is left alone, and any
             // other takes a request written out in the call. A request built elsewhere, or target-typed (`new()`), cannot
-            // be read by this scan, so it is refused here and the call names its request.
+            // be read by this scan, so it is refused here and the call names its request. It reads calls and not method
+            // groups, so `Func<...> f = search.SearchAsync;` reaches a search it does not see.
             foreach (Match call in Regex.Matches(text, @"\.SearchAsync\("))
             {
                 var args = Between(text, call.Index + call.Length - 1, '(', ')');
@@ -445,7 +449,7 @@ public sealed class SearchSurfaceCoverageTests
                     continue;
                 }
 
-                var initializer = Regex.Replace(Between(text, open, '{', '}'), @"//[^\n]*|/\*.*?\*/|""(?:[^""\\]|\\.)*""", " ", RegexOptions.Singleline);
+                var initializer = Between(text, open, '{', '}');
                 if (!Regex.IsMatch(initializer, @"\bSurface\s*=\s*SearchSurface\.(Api|Mcp|Context)\b"))
                     problems.Add($"{Where(m.Index)}: the request does not set Surface to Api, Mcp or Context");
             }

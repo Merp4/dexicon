@@ -387,8 +387,8 @@ full, as the query, and an agent's own MCP queries are stored whether or not the
 into a prompt or a query, a pasted credential included. Only an administrator can read them, through the Searches
 screen or `GET /api/searches`, and a key cannot, whatever its scopes.
 
-The rows are in `catalog.db` and in every backup of it, for `DEXICON__SEARCHLOG__RETENTIONDAYS` days (30 by default; `0`
-keeps them without limit). `DEXICON__SEARCHLOG__STOREQUERYTEXT=false` keeps each query's length and drops its text, and
+The rows are in `catalog.db` and in every backup of it, for `DEXICON__SEARCHLOG__RETENTIONDAYS` days (30 by default; `0` or
+fewer keeps them without limit). `DEXICON__SEARCHLOG__STOREQUERYTEXT=false` keeps each query's length and drops its text, and
 `DEXICON__SEARCHLOG__ENABLED=false` records nothing. Neither removes rows already written: those leave with retention, or
 by deleting rows from `search_log`. Scrub a backup before it leaves this machine, as for any file that holds what was
 indexed.

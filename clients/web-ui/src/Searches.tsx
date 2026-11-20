@@ -131,7 +131,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
       {settings && !settings.enabled && (
         <Notice tone="warn">
           The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>). Nothing new is recorded.
-          Rows already written stay until retention removes them, which it never does when retention is 0 days.
+          Rows already written stay until retention removes them, which it never does when retention is 0 days or fewer.
         </Notice>
       )}
       {settings?.enabled && (

@@ -3059,7 +3059,7 @@ its figures are left out until it is.
 
 **What it holds.** The query as it ran (for a phrase-only search, the phrase), cut at 500 characters, with its full length.
 The context hook, once registered (it is opt-in), sends each prompt it handles in full, so rows hold prompts and anything
-typed into one. Queries an agent sends over MCP are stored whether or not the hook is installed. The catalogue and every backup
+typed into one. Queries an agent sends over MCP are stored whether or not the hook is registered. The catalogue and every backup
 of it carry them for the retention period ([10](10-security-secrets.md#what-the-search-log-holds)). The score is in the
 units of the mode that ran, a cosine for `semantic`, the fused value for `hybrid`, so it is compared within a mode. The key
 and the corpora are stored by the names they had then, with no foreign key, so a row outlives both.
