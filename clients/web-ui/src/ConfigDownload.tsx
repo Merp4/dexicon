@@ -37,7 +37,8 @@ export function ConfigDownload() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      // After the click has been handled: some browsers cancel a download whose address is released at once.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       setOmitted(file.omitted ?? []);
     } catch (e) {
       setError(e);

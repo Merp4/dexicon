@@ -15,7 +15,7 @@ vi.mock('./api', async (importOriginal) => ({
 }));
 
 const created: Blob[] = [];
-const downloads: string[] = [];
+const downloads: { name: string; href: string }[] = [];
 
 beforeEach(() => {
   exportConfig.mockReset();
@@ -27,11 +27,12 @@ beforeEach(() => {
   });
   URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    downloads.push(this.download);
+    downloads.push({ name: this.download, href: this.href });
   });
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -48,18 +49,59 @@ describe('the file', () => {
 
 describe('the download', () => {
   it('asks the server once and hands the browser a JSON file named for today', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 5, 10, 0));
     exportConfig.mockResolvedValue({ format: 'dexicon-config', version: 1, omitted: [] });
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: () => {} });
     render(<ConfigDownload />);
 
     await user.click(screen.getByRole('button', { name: 'Download configuration' }));
 
     await vi.waitFor(() => expect(downloads).toHaveLength(1));
     expect(exportConfig).toHaveBeenCalledTimes(1);
-    expect(downloads[0]).toMatch(/^dexicon-config-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(downloads[0]).toEqual({ name: 'dexicon-config-2026-11-05.json', href: 'blob:test' });
     expect(created[0].type).toBe('application/json');
     expect(await created[0].text()).toBe(fileText({ format: 'dexicon-config', version: 1, omitted: [] }));
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test');
+    await vi.waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test'));
+  });
+
+  it('treats a file with no omitted list as one that left nothing out', async () => {
+    exportConfig.mockResolvedValue({ format: 'dexicon-config', version: 1 });
+    const user = userEvent.setup();
+    render(<ConfigDownload />);
+
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    expect(screen.queryByText('Left out of the file')).not.toBeInTheDocument();
+  });
+
+  it('clears what the last file left out when the next download fails', async () => {
+    exportConfig.mockResolvedValueOnce({ format: 'dexicon-config', version: 1, omitted: ['one thing left out'] });
+    exportConfig.mockRejectedValueOnce(new Error('refused'));
+    const user = userEvent.setup();
+    render(<ConfigDownload />);
+
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+    expect(await screen.findByText('one thing left out')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+
+    expect(await screen.findByText(/refused/)).toBeInTheDocument();
+    expect(screen.queryByText('one thing left out')).not.toBeInTheDocument();
+  });
+
+  it('clears an earlier error when the next download works', async () => {
+    exportConfig.mockRejectedValueOnce(new Error('refused'));
+    exportConfig.mockResolvedValueOnce({ format: 'dexicon-config', version: 1, omitted: [] });
+    const user = userEvent.setup();
+    render(<ConfigDownload />);
+
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+    expect(await screen.findByText(/refused/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Download configuration' }));
+
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    expect(screen.queryByText(/refused/)).not.toBeInTheDocument();
   });
 
   it('says what the file leaves out', async () => {

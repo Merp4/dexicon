@@ -25,6 +25,7 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
     private IndexingHarness _harness = null!;
     private string _agentSecret = string.Empty;
+    private string _agentId = string.Empty;
     private byte[] _agentHash = [];
     private byte[] _agentSalt = [];
 
@@ -36,6 +37,27 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
         // The harness's ten placeholder keys are not the subject here.
         await db.Tokens.ExecuteDeleteAsync(TestContext.Current.CancellationToken);
+
+        // Rows are added in an order that is not the order of the file, with one capitalised name in each list, so an
+        // ordering that was dropped, or that ignored case in the wrong direction, changes what is written.
+        db.Sources.Add(new Source
+        {
+            Id = "source-zebra",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.Workspace,
+            RootPath = "Zebra",
+            UseGitignore = false,
+            MaxFileBytes = 777,
+            CreatedUtc = Now,
+        });
+        db.Sources.Add(new Source
+        {
+            Id = "source-history",
+            CorpusId = IndexingHarness.CorpusId,
+            Kind = SourceKind.GitHistory,
+            RootPath = "history",
+            CreatedUtc = Now,
+        });
 
         var papers = new Corpus
         {
@@ -60,52 +82,46 @@ public sealed class ConfigExportTests : IAsyncLifetime
             GitOptions = new GitHistoryOptions { Ref = "main", IncludeDiff = true, MaxCommits = 100 }.ToJson(),
             CreatedUtc = Now,
         });
-        papers.ChunkSets.Add(new ChunkSet
-        {
-            Id = "set-p",
-            CorpusId = "corpus-2",
-            Name = "default",
-            Description = "the first",
-            EmbeddingProvider = "ollama",
-            EmbeddingModel = "embeddinggemma",
-            EmbeddingDimensions = 768,
-            CollectionName = "dexicon__embeddinggemma__768",
-            ChunkSize = 512,
-            ChunkOverlap = 64,
-            BoundaryMode = "custom",
-            CustomBoundaryPattern = "^## ",
-            UnitAware = true,
-            SentenceAware = true,
-            HeadingContext = true,
-            IsDefault = true,
-            State = CorpusState.Ready,
-            CreatedUtc = Now,
-        });
+
+        // One flag true in each set but the default, which has them all, so a flag that is swapped or fixed shows.
+        papers.ChunkSets.Add(PapersSet("set-z", "Zed", unit: true));
+        papers.ChunkSets.Add(PapersSet("set-g", "gamma", heading: true));
+        papers.ChunkSets.Add(PapersSet("set-p", "default", unit: true, sentence: true, heading: true, isDefault: true,
+            description: "the first", size: 512, overlap: 64, boundary: "custom", pattern: "^## "));
+        papers.ChunkSets.Add(PapersSet("set-b", "beta", sentence: true));
         db.Corpora.Add(papers);
 
-        db.ModelProfiles.Add(new EmbeddingModelProfile
-        {
-            Provider = "ollama",
-            Model = "embeddinggemma",
-            DocumentTemplate = "title: none | text: {text}",
-            QueryTemplate = "task: search result | query: {text}",
-            Notes = "from the model card",
-            CreatedUtc = Now,
-            UpdatedUtc = Now,
-        });
+        var archive = new Corpus { Id = "corpus-3", Name = "Archive", State = CorpusState.Ready, CreatedUtc = Now };
+        archive.Sources.Add(new Source { Id = "source-up2", CorpusId = "corpus-3", Kind = SourceKind.Upload, CreatedUtc = Now });
+        db.Corpora.Add(archive);
+
+        foreach (var model in new[] { "Zeta", "embeddinggemma", "beta" })
+            db.ModelProfiles.Add(new EmbeddingModelProfile
+            {
+                Provider = "ollama",
+                Model = model,
+                DocumentTemplate = model == "embeddinggemma" ? "title: none | text: {text}" : "doc: {text}",
+                QueryTemplate = model == "embeddinggemma" ? "task: search result | query: {text}" : "q: {text}",
+                Notes = model == "embeddinggemma" ? "from the model card" : null,
+                CreatedUtc = Now,
+                UpdatedUtc = Now,
+            });
 
         var tokens = new TokenService(db, TimeProvider.System);
-        var (agent, issued) = tokens.Build("agent", [Scopes.Search, Scopes.Ingest], expiresUtc: null, corpusIds: ["corpus-2", IndexingHarness.CorpusId]);
-        _agentSecret = issued.Secret;
-        _agentHash = agent.TokenHash;
-        _agentSalt = agent.TokenSalt;
-        db.Tokens.Add(agent);
 
         var (everything, _) = tokens.Build("everything", [Scopes.Search], expiresUtc: Now.AddDays(30));
         db.Tokens.Add(everything);
 
-        var (expired, _) = tokens.Build("expired", [Scopes.Search], expiresUtc: Now.AddDays(-1), corpusIds: []);
+        var (expired, _) = tokens.Build("Expired", [Scopes.Search], expiresUtc: Now.AddDays(-1), corpusIds: []);
         db.Tokens.Add(expired);
+
+        var (agent, issued) = tokens.Build("agent", [Scopes.Search, Scopes.Ingest], expiresUtc: null,
+            corpusIds: ["corpus-3", "corpus-2", IndexingHarness.CorpusId]);
+        _agentSecret = issued.Secret;
+        _agentId = agent.Id;
+        _agentHash = agent.TokenHash;
+        _agentSalt = agent.TokenSalt;
+        db.Tokens.Add(agent);
 
         var (revoked, _) = tokens.Build("revoked", [Scopes.Search], expiresUtc: null);
         revoked.RevokedUtc = Now;
@@ -113,6 +129,31 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
+
+    private static ChunkSet PapersSet(string id, string name, bool unit = false, bool sentence = false, bool heading = false,
+        bool isDefault = false, string? description = null, int size = 256, int overlap = 32, string boundary = "language-aware",
+        string? pattern = null) =>
+        new()
+        {
+            Id = id,
+            CorpusId = "corpus-2",
+            Name = name,
+            Description = description,
+            EmbeddingProvider = "ollama",
+            EmbeddingModel = "embeddinggemma",
+            EmbeddingDimensions = 768,
+            CollectionName = "dexicon__embeddinggemma__768",
+            ChunkSize = size,
+            ChunkOverlap = overlap,
+            BoundaryMode = boundary,
+            CustomBoundaryPattern = pattern,
+            UnitAware = unit,
+            SentenceAware = sentence,
+            HeadingContext = heading,
+            IsDefault = isDefault,
+            State = CorpusState.Ready,
+            CreatedUtc = Now,
+        };
 
     public async ValueTask DisposeAsync() => await _harness.DisposeAsync();
 
@@ -141,7 +182,7 @@ public sealed class ConfigExportTests : IAsyncLifetime
     [Fact]
     public async Task CorporaAreInNameOrderIgnoringCase()
     {
-        (await ExportAsync()).Corpora.Select(c => c.Name).ShouldBe(["notes", "Papers"]);
+        (await ExportAsync()).Corpora.Select(c => c.Name).ShouldBe(["Archive", "notes", "Papers"]);
     }
 
     [Fact]
@@ -151,9 +192,20 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
         papers.Description.ShouldBe("Conference papers");
         Written(papers.Defaults).ShouldBe(Written(new ExportedFilters(["**/*.md"], [], UseGitignore: false, MaxFileBytes: 1000)));
-        Written(papers.ChunkSets.ShouldHaveSingleItem()).ShouldBe(Written(new ExportedChunkSet(
-            "default", "the first", "ollama", "embeddinggemma", 512, 64, "custom", "^## ",
-            UnitAware: true, SentenceAware: true, HeadingContext: true, IsDefault: true)));
+
+        // By name ignoring case: beta, default, gamma, Zed (an ordinal order would put Zed first).
+        var expected = new[]
+        {
+            new ExportedChunkSet("beta", null, "ollama", "embeddinggemma", 256, 32, "language-aware", null,
+                UnitAware: false, SentenceAware: true, HeadingContext: false, IsDefault: false),
+            new ExportedChunkSet("default", "the first", "ollama", "embeddinggemma", 512, 64, "custom", "^## ",
+                UnitAware: true, SentenceAware: true, HeadingContext: true, IsDefault: true),
+            new ExportedChunkSet("gamma", null, "ollama", "embeddinggemma", 256, 32, "language-aware", null,
+                UnitAware: false, SentenceAware: false, HeadingContext: true, IsDefault: false),
+            new ExportedChunkSet("Zed", null, "ollama", "embeddinggemma", 256, 32, "language-aware", null,
+                UnitAware: true, SentenceAware: false, HeadingContext: false, IsDefault: false),
+        };
+        Written(papers.ChunkSets).ShouldBe(Written(expected));
     }
 
     [Fact]
@@ -163,7 +215,21 @@ public sealed class ConfigExportTests : IAsyncLifetime
 
         Written(notes.Defaults).ShouldBe(Written(new ExportedFilters(null, null, null, null)));
         notes.ChunkSets.Select(s => s.Name).ShouldBe(["alt-1", "default"], "by name, so alt-1 is before default");
-        notes.Sources.Select(s => s.RootPath).ShouldBe(["history", "notes"], "by root, ignoring case");
+
+        // Workspace sources first, by root ignoring case (Zebra is last, which an ordinal order would not give), then history.
+        notes.Sources.Select(s => (s.Kind, s.RootPath)).ShouldBe(
+            [("workspace", "history"), ("workspace", "notes"), ("workspace", "Zebra"), ("githistory", "history")]);
+    }
+
+    [Fact]
+    public async Task ASourceKeepsWhatItSetsForItselfAndAWorkspaceSourceHasNoGitOptions()
+    {
+        var notes = (await ExportAsync()).Corpora.Single(c => c.Name == "notes");
+
+        var zebra = notes.Sources.Single(s => s.RootPath == "Zebra");
+        Written(zebra.Filters).ShouldBe(Written(new ExportedFilters(null, null, UseGitignore: false, MaxFileBytes: 777)));
+        notes.Sources.Where(s => s.Kind == "workspace").ShouldAllBe(s => s.Git == null);
+        notes.Sources.Single(s => s.Kind == "githistory").Git.ShouldNotBeNull();
     }
 
     [Fact]
@@ -187,13 +253,18 @@ public sealed class ConfigExportTests : IAsyncLifetime
         git.Git.ShouldNotBeNull().Ref.ShouldBe("main");
         git.Git.IncludeDiff.ShouldBeTrue();
         git.Git.MaxCommits.ShouldBe(100);
-        export.Omitted.ShouldHaveSingleItem().ShouldContain("'Papers' holds uploaded documents");
+        export.Omitted.Count.ShouldBe(2);
+        export.Omitted[0].ShouldContain("'Archive' holds uploaded documents");
+        export.Omitted[1].ShouldContain("'Papers' holds uploaded documents");
     }
 
     [Fact]
     public async Task ModelProfilesKeepTheirTemplatesAndNotes()
     {
-        (await ExportAsync()).ModelProfiles.ShouldHaveSingleItem().ShouldBe(new ExportedModelProfile(
+        var profiles = (await ExportAsync()).ModelProfiles;
+
+        profiles.Select(p => p.Model).ShouldBe(["beta", "embeddinggemma", "Zeta"], "by model ignoring case");
+        profiles[1].ShouldBe(new ExportedModelProfile(
             "ollama", "embeddinggemma", "title: none | text: {text}", "task: search result | query: {text}", "from the model card"));
     }
 
@@ -202,8 +273,9 @@ public sealed class ConfigExportTests : IAsyncLifetime
     {
         var keys = (await ExportAsync()).Keys;
 
-        keys.Select(k => k.Name).ShouldBe(["agent", "everything", "expired"]);
-        Written(keys[0]).ShouldBe(Written(new ExportedKey("agent", [Scopes.Ingest, Scopes.Search], AllCorpora: false, ["notes", "Papers"], ExpiresUtc: null)));
+        keys.Select(k => k.Name).ShouldBe(["agent", "everything", "Expired"], "by name ignoring case");
+        Written(keys[0]).ShouldBe(Written(new ExportedKey(
+            "agent", [Scopes.Ingest, Scopes.Search], AllCorpora: false, ["Archive", "notes", "Papers"], ExpiresUtc: null)));
         Written(keys[1]).ShouldBe(Written(new ExportedKey("everything", [Scopes.Search], AllCorpora: true, [], Now.AddDays(30))));
         keys[2].AllCorpora.ShouldBeFalse();
         keys[2].Corpora.ShouldBeEmpty();
@@ -215,11 +287,22 @@ public sealed class ConfigExportTests : IAsyncLifetime
     {
         var text = Text(await ExportAsync());
 
-        text.ShouldNotContain(_agentSecret);
-        text.ShouldNotContain(Convert.ToBase64String(_agentHash));
-        text.ShouldNotContain(Convert.ToBase64String(_agentSalt));
-        text.ShouldNotContain("dex_");
-        foreach (var internalValue in new[] { "corpus-1", "corpus-2", "source-1", "source-git", "set-1", "set-p", "dexicon__embeddinggemma__768" })
+        // Every string the file holds, decoded. A search of the written text would miss a base64 value whose '+' the writer
+        // escapes, which is half of them.
+        var strings = StringsOf(JsonDocument.Parse(text).RootElement).ToList();
+        strings.ShouldNotBeEmpty();
+
+        var credentials = new[]
+        {
+            _agentSecret, _agentId,
+            Convert.ToBase64String(_agentHash), Convert.ToHexString(_agentHash), Convert.ToHexString(_agentHash).ToLowerInvariant(),
+            Convert.ToBase64String(_agentSalt), Convert.ToHexString(_agentSalt), Convert.ToHexString(_agentSalt).ToLowerInvariant(),
+        };
+        foreach (var credential in credentials)
+            strings.ShouldNotContain(v => v.Contains(credential, StringComparison.Ordinal), $"a stored credential value appears: {credential.Length} characters");
+
+        strings.ShouldNotContain(v => v.Contains("dex_", StringComparison.Ordinal));
+        foreach (var internalValue in new[] { "corpus-1", "corpus-2", "corpus-3", "source-1", "source-git", "source-up", "set-1", "set-p", "dexicon__embeddinggemma__768" })
             text.ShouldNotContain(internalValue);
 
         var properties = JsonDocument.Parse(text).RootElement.EnumerateObject().Select(p => p.Name).ToList();
@@ -229,6 +312,14 @@ public sealed class ConfigExportTests : IAsyncLifetime
         text.ShouldNotContain("createdUtc");
         text.ShouldNotContain("tokenHash");
     }
+
+    private static IEnumerable<string> StringsOf(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => [element.GetString()!],
+        JsonValueKind.Object => element.EnumerateObject().SelectMany(p => StringsOf(p.Value).Append(p.Name)),
+        JsonValueKind.Array => element.EnumerateArray().SelectMany(StringsOf),
+        _ => [],
+    };
 
     [Fact]
     public async Task TwoExportsOfOneStateAreTheSameText()
@@ -244,15 +335,85 @@ public sealed class ConfigExportTests : IAsyncLifetime
         var read = JsonSerializer.Deserialize<ConfigExport>(text, ConfigEndpoints.FileJson).ShouldNotBeNull();
 
         Text(read).ShouldBe(text);
-        read.Corpora.Count.ShouldBe(2);
+        read.Corpora.Count.ShouldBe(3);
     }
 
     [Fact]
-    public async Task APropertyThatIsNullIsNotWritten()
+    public async Task AnUnsetPropertyIsWrittenAsNullAndAnEmptyListAsAnEmptyList()
     {
         var text = Text(await ExportAsync());
 
-        text.ShouldNotContain(": null");
+        text.ShouldContain("\"includeGlobs\": null");
+        text.ShouldContain("\"git\": null");
+        text.ShouldContain("\"expiresUtc\": null");
+        text.ShouldContain("\"excludeGlobs\": []");
+    }
+
+    [Fact]
+    public async Task RowsThatTieOnTheirNameAreOrderedByHowTheyAreWrittenAndNotByInsertion()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            // "twin" is added before "Twin", and the key that sorts second is added first.
+            db.Corpora.Add(new Corpus { Id = "corpus-t1", Name = "twin", State = CorpusState.Ready, CreatedUtc = Now });
+            db.Corpora.Add(new Corpus { Id = "corpus-t2", Name = "Twin", State = CorpusState.Ready, CreatedUtc = Now });
+            var tokens = new TokenService(db, TimeProvider.System);
+            db.Tokens.Add(tokens.Build("dup", [Scopes.Search], expiresUtc: null).Row);
+            db.Tokens.Add(tokens.Build("dup", [Scopes.Ingest], expiresUtc: null).Row);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var export = await ExportAsync();
+
+        export.Corpora.Select(c => c.Name).ShouldBe(["Archive", "notes", "Papers", "Twin", "twin"]);
+        export.Keys.Where(k => k.Name == "dup").Select(k => k.Scopes.Single()).ShouldBe([Scopes.Ingest, Scopes.Search]);
+        Text(export).ShouldBe(Text(await ExportAsync()));
+    }
+
+    [Fact]
+    public async Task AStoredSettingThatCannotBeReadIsReportedAndDoesNotStopTheExport()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            var broken = new Corpus
+            {
+                Id = "corpus-b",
+                Name = "Broken",
+                State = CorpusState.Ready,
+                CreatedUtc = Now,
+                DefaultIncludeGlobs = "oops",
+            };
+            broken.Sources.Add(new Source
+            {
+                Id = "source-bad",
+                CorpusId = "corpus-b",
+                Kind = SourceKind.GitHistory,
+                RootPath = "Bad",
+                GitOptions = "{bad",
+                CreatedUtc = Now,
+            });
+            broken.Sources.Add(new Source
+            {
+                Id = "source-ok",
+                CorpusId = "corpus-b",
+                Kind = SourceKind.Workspace,
+                RootPath = "Ok",
+                IncludeGlobs = "[",
+                CreatedUtc = Now,
+            });
+            db.Corpora.Add(broken);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var export = await ExportAsync();
+
+        var corpus = export.Corpora.Single(c => c.Name == "Broken");
+        corpus.Sources.ShouldHaveSingleItem().RootPath.ShouldBe("Ok", "the history source whose options could not be read is left out");
+        corpus.Defaults.IncludeGlobs.ShouldBeNull();
+        corpus.Sources[0].Filters.IncludeGlobs.ShouldBeNull();
+        export.Omitted.ShouldContain("The githistory source 'Bad' of corpus 'Broken' has stored options that could not be read, and is not in this file.");
+        export.Omitted.ShouldContain("The default include globs of corpus 'Broken' could not be read from its stored form, and is written as unset.");
+        export.Omitted.ShouldContain("The include globs of the workspace source 'Ok' of corpus 'Broken' could not be read from its stored form, and is written as unset.");
     }
 
     [Fact]
@@ -335,14 +496,40 @@ public sealed class ConfigExportHostTests : IDisposable
         var body = await login.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", body.GetProperty("token").GetString());
 
+        var before = DateTime.UtcNow.ToString("yyyy-MM-dd");
         var response = await client.GetAsync("/api/config/export", TestContext.Current.CancellationToken);
+        var after = DateTime.UtcNow.ToString("yyyy-MM-dd");
 
         response.EnsureSuccessStatusCode();
-        response.Content.Headers.ContentDisposition.ShouldNotBeNull().FileName.ShouldNotBeNull().ShouldMatch(@"^""?dexicon-config-\d{4}-\d{2}-\d{2}\.json""?$");
+        var disposition = response.Content.Headers.ContentDisposition.ShouldNotBeNull();
+        disposition.DispositionType.ShouldBe("attachment");
+        disposition.FileName.ShouldNotBeNull().Trim('"').ShouldBeOneOf($"dexicon-config-{before}.json", $"dexicon-config-{after}.json");
+        response.Headers.CacheControl.ShouldNotBeNull().NoStore.ShouldBeTrue("a file of key scopes and paths is not for a cache to keep");
         var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         var root = JsonDocument.Parse(text).RootElement;
         root.GetProperty("format").GetString().ShouldBe("dexicon-config");
         root.GetProperty("version").GetInt32().ShouldBe(1);
         text.ShouldContain("\n  ", customMessage: "written indented, for a diff");
+    }
+
+    [Fact]
+    public async Task AKeyWithEveryScopeButAdminIsRefusedThroughTheRoute()
+    {
+        await using var factory = Start();
+        using var client = factory.CreateClient();
+        var login = await client.PostAsJsonAsync("/api/session", new { password = Password }, TestContext.Current.CancellationToken);
+        login.EnsureSuccessStatusCode();
+        var admin = (await login.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("token").GetString();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", admin);
+
+        var created = await client.PostAsJsonAsync("/api/tokens",
+            new { name = "everything-but-admin", scopes = Scopes.Issuable }, TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var key = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("secret").GetString();
+
+        using var asKey = factory.CreateClient();
+        asKey.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+        (await asKey.GetAsync("/api/config/export", TestContext.Current.CancellationToken)).StatusCode.ShouldBe(System.Net.HttpStatusCode.Forbidden);
     }
 }

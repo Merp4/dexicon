@@ -19,7 +19,10 @@ namespace Dexicon.Api;
 /// <param name="Version">The version of this layout. A change that a reader of version 1 would misread raises it.</param>
 /// <param name="ExportedUtc">When the file was made. The only field that differs between two exports of one state.</param>
 /// <param name="DexiconVersion">The build that wrote it.</param>
-/// <param name="Omitted">What this instance holds that the file does not, one sentence each: a reader is not left to find out.</param>
+/// <param name="Omitted">
+/// What this instance holds that the file does not, one sentence each: a corpus's uploaded documents, and a stored setting
+/// that could not be read. A reader is not left to find out.
+/// </param>
 public sealed record ConfigExport(
     string Format,
     int Version,
@@ -39,8 +42,9 @@ public sealed record ExportedCorpus(
     IReadOnlyList<ExportedChunkSet> ChunkSets);
 
 /// <summary>
-/// Filters as a corpus or a source sets them. A field that is left out inherits, and an empty list is a filter that
-/// selects nothing or excludes nothing: the two are different, which is why a null list is written as no property.
+/// Filters as a corpus or a source sets them. A property that is null inherits, and an empty list is a filter that
+/// selects nothing or excludes nothing: the two are different, and both are written, null as <c>null</c> and the empty
+/// list as <c>[]</c>.
 /// </summary>
 public sealed record ExportedFilters(
     IReadOnlyList<string>? IncludeGlobs,
@@ -50,6 +54,7 @@ public sealed record ExportedFilters(
 
 /// <param name="Kind"><c>workspace</c> or <c>githistory</c>. An upload source is not exported: see <see cref="ConfigExport.Omitted"/>.</param>
 /// <param name="Filters">What the source sets for itself. What it inherits from its corpus is not repeated.</param>
+/// <param name="Git">A history source's options. Null for a workspace source.</param>
 public sealed record ExportedSource(
     string Kind,
     string? RootPath,
@@ -92,13 +97,13 @@ public static class ConfigEndpoints
     public const int FormatVersion = 1;
 
     /// <summary>
-    /// How the file is written: indented, because it is read in a diff, with properties in declaration order and none
-    /// written for a null, so two exports of one state are the same text.
+    /// How the file is written: indented, because it is read in a diff, with properties in declaration order and every
+    /// property written, a null as <c>null</c>, so the file says what the OpenAPI document says and a reader can tell
+    /// "inherits" from "none". Two exports of one state are the same text.
     /// </summary>
     internal static readonly JsonSerializerOptions FileJson = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() },
     };
 
@@ -114,18 +119,24 @@ public static class ConfigEndpoints
         var export = await BuildAsync(db, now, ThisAssembly.Version, ct);
 
         http.Response.Headers.ContentDisposition = $"attachment; filename=\"dexicon-config-{now:yyyy-MM-dd}.json\"";
+
+        // Key names, scopes and reach and every workspace path: not for a cache to keep.
+        http.Response.Headers.CacheControl = "no-store";
         return Results.Json(export, FileJson);
     }
 
     /// <summary>
-    /// Reads the catalogue and builds the file. Everything is ordered by name, ignoring case, so the order does not
-    /// depend on how the rows were created.
+    /// Reads the catalogue and builds the file. Everything is ordered by name ignoring case, and rows that tie are ordered
+    /// by how they are written, so the order depends neither on how the rows were created nor on what order the database
+    /// returned them in.
     /// </summary>
     internal static async Task<ConfigExport> BuildAsync(CatalogDbContext db, DateTime now, string version, CancellationToken ct)
     {
+        // A split query: one joined statement would return every source once for each chunk set of its corpus.
         var corpora = await db.Corpora.AsNoTracking()
             .Include(c => c.Sources)
             .Include(c => c.ChunkSets)
+            .AsSplitQuery()
             .ToListAsync(ct);
         var profiles = await db.ModelProfiles.AsNoTracking().ToListAsync(ct);
         var keys = await db.Tokens.AsNoTracking()
@@ -133,57 +144,102 @@ public static class ConfigEndpoints
             .Where(t => t.RevokedUtc == null)
             .ToListAsync(ct);
 
-        var omitted = new List<string>();
-        var exported = new List<ExportedCorpus>();
-
-        foreach (var corpus in corpora.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
-        {
-            var uploads = corpus.Sources.Count(s => s.Kind == SourceKind.Upload);
-            if (uploads > 0)
-                omitted.Add($"Corpus '{corpus.Name}' holds uploaded documents. Their content and their attachment are not in this file.");
-
-            exported.Add(new ExportedCorpus(
-                corpus.Name,
-                corpus.Description,
-                new ExportedFilters(
-                    SourceFilters.Globs(corpus.DefaultIncludeGlobs), SourceFilters.Globs(corpus.DefaultExcludeGlobs), corpus.DefaultUseGitignore, corpus.DefaultMaxFileBytes),
-                [.. corpus.Sources
-                    .Where(s => s.Kind != SourceKind.Upload)
-                    .OrderBy(s => s.Kind)
-                    .ThenBy(s => s.RootPath, StringComparer.OrdinalIgnoreCase)
-                    .Select(ToExported)],
-                [.. corpus.ChunkSets
-                    .OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(ToExported)]));
-        }
+        // Each corpus is built with its own notes, so that the notes follow the corpora's order.
+        var built = corpora.Select(Build).OrderBy(b => b.Corpus.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(b => Written(b.Corpus), StringComparer.Ordinal).ToList();
 
         return new ConfigExport(
             FormatName,
             FormatVersion,
             now,
             version,
-            exported,
+            [.. built.Select(b => b.Corpus)],
             [.. profiles
+                .Select(p => new ExportedModelProfile(p.Provider, p.Model, p.DocumentTemplate, p.QueryTemplate, p.Notes))
                 .OrderBy(p => p.Provider, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(p => p.Model, StringComparer.OrdinalIgnoreCase)
-                .Select(p => new ExportedModelProfile(p.Provider, p.Model, p.DocumentTemplate, p.QueryTemplate, p.Notes))],
+                .ThenBy(Written, StringComparer.Ordinal)],
             [.. keys
-                .OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(k => new ExportedKey(
                     k.Name,
                     [.. k.Scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                         .Order(StringComparer.Ordinal)],
                     k.AllCorpora,
-                    [.. k.Corpora.Select(tc => tc.Corpus!.Name).Order(StringComparer.OrdinalIgnoreCase)],
-                    k.ExpiresUtc))],
-            omitted);
+                    [.. k.Corpora.Select(tc => tc.Corpus!.Name).Order(StringComparer.OrdinalIgnoreCase).ThenBy(n => n, StringComparer.Ordinal)],
+                    k.ExpiresUtc))
+                .OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(Written, StringComparer.Ordinal)],
+            [.. built.SelectMany(b => b.Notes.Order(StringComparer.Ordinal))]);
     }
 
-    private static ExportedSource ToExported(Source s) =>
-        new(s.Kind.ToString().ToLowerInvariant(),
-            s.RootPath,
-            new ExportedFilters(SourceFilters.Globs(s.IncludeGlobs), SourceFilters.Globs(s.ExcludeGlobs), s.UseGitignore, s.MaxFileBytes),
-            s.Kind == SourceKind.GitHistory ? GitHistoryOptions.FromJson(s.GitOptions) : null);
+    private static string Written<T>(T value) => JsonSerializer.Serialize(value, FileJson);
+
+    private static (ExportedCorpus Corpus, List<string> Notes) Build(Corpus corpus)
+    {
+        var notes = new List<string>();
+
+        if (corpus.Sources.Any(s => s.Kind == SourceKind.Upload))
+            notes.Add($"Corpus '{corpus.Name}' holds uploaded documents. Their content and their attachment are not in this file.");
+
+        // A stored list that will not parse reads as "no opinion" everywhere else (SourceFilters.Globs), so the file says
+        // when it wrote one as unset for that reason.
+        IReadOnlyList<string>? Globs(string? stored, string what)
+        {
+            var globs = SourceFilters.Globs(stored);
+            if (stored is not null && globs is null)
+                notes.Add($"{what} of corpus '{corpus.Name}' could not be read from its stored form, and is written as unset.");
+            return globs;
+        }
+
+        var sources = new List<ExportedSource>();
+        foreach (var s in corpus.Sources.Where(s => s.Kind != SourceKind.Upload))
+        {
+            var source = $"{s.Kind.ToString().ToLowerInvariant()} source '{s.RootPath}'";
+            GitHistoryOptions? git = null;
+
+            if (s.Kind == SourceKind.GitHistory)
+            {
+                try
+                {
+                    git = GitHistoryOptions.FromJson(s.GitOptions);
+                }
+                catch (JsonException)
+                {
+                    notes.Add($"The {source} of corpus '{corpus.Name}' has stored options that could not be read, and is not in this file.");
+                    continue;
+                }
+            }
+
+            sources.Add(new ExportedSource(
+                s.Kind.ToString().ToLowerInvariant(),
+                s.RootPath,
+                new ExportedFilters(
+                    Globs(s.IncludeGlobs, $"The include globs of the {source}"),
+                    Globs(s.ExcludeGlobs, $"The exclude globs of the {source}"),
+                    s.UseGitignore,
+                    s.MaxFileBytes),
+                git));
+        }
+
+        var exported = new ExportedCorpus(
+            corpus.Name,
+            corpus.Description,
+            new ExportedFilters(
+                Globs(corpus.DefaultIncludeGlobs, "The default include globs"),
+                Globs(corpus.DefaultExcludeGlobs, "The default exclude globs"),
+                corpus.DefaultUseGitignore,
+                corpus.DefaultMaxFileBytes),
+            [.. sources
+                .OrderBy(s => s.Kind == "workspace" ? 0 : 1)
+                .ThenBy(s => s.RootPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(Written, StringComparer.Ordinal)],
+            [.. corpus.ChunkSets
+                .Select(ToExported)
+                .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(Written, StringComparer.Ordinal)]);
+
+        return (exported, notes);
+    }
 
     private static ExportedChunkSet ToExported(ChunkSet c) =>
         new(c.Name, c.Description, c.EmbeddingProvider, c.EmbeddingModel, c.ChunkSize, c.ChunkOverlap, c.BoundaryMode,
