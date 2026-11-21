@@ -273,3 +273,24 @@ describe('how often it asks', () => {
     expect(listJobs).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('before the list has arrived', () => {
+  it('says it is loading, and not that nothing has happened', async () => {
+    listJobs.mockReturnValue(new Promise(() => {}));
+
+    render(<JobsView corpora={corpora} live={{}} onError={() => {}} />);
+
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Jobs' })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing has happened yet')).not.toBeInTheDocument();
+  });
+
+  it('says nothing has happened once the list has arrived empty', async () => {
+    listJobs.mockResolvedValue([]);
+
+    render(<JobsView corpora={corpora} live={{}} onError={() => {}} />);
+
+    expect(await screen.findByText('Nothing has happened yet')).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+});

@@ -328,3 +328,22 @@ describe('what a key reaches', () => {
     expect(createToken).toHaveBeenCalledWith('project-agent', ['search'], { all: false, corpusIds: ['c1'] });
   });
 });
+
+describe('before the keys and the corpora have arrived', () => {
+  it('says it is loading, and neither that there are no keys nor an id in place of a name', async () => {
+    let answer!: (c: unknown[]) => void;
+    listTokens.mockResolvedValue([token({ allCorpora: false, corpusIds: ['c1'] })]);
+    listCorpora.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+
+    render(<AccessView onError={() => {}} />);
+
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('No keys')).not.toBeInTheDocument();
+    expect(screen.queryByText('c1')).not.toBeInTheDocument();
+
+    answer([{ id: 'c1', name: 'docs' }]);
+
+    expect(await screen.findByText('docs')).toBeInTheDocument();
+    expect(screen.queryByText('c1')).not.toBeInTheDocument();
+  });
+});

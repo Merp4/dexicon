@@ -379,3 +379,15 @@ describe('the searches screen, branch by branch', () => {
     expect(screen.getByText('MCP tool').className).not.toMatch(/warn/);
   });
 });
+
+describe('the count line under a filter', () => {
+  it.each([[1, '1 search matches'], [2, '2 searches match']])('says %i of them as "%s"', async (n, said) => {
+    listSearches.mockResolvedValue(page(Array.from({ length: n }, (_, i) => item({ id: i + 1 })), { matching: n }));
+
+    render(<SearchesView onError={vi.fn()} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('radio', { name: 'Found nothing' }));
+
+    expect(await screen.findByText(new RegExp(`^${said}`))).toBeInTheDocument();
+  });
+});
