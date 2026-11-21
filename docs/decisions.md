@@ -3127,7 +3127,71 @@ secret exists only as a hash) and no admin password. No uploaded document: an up
   query would return each source once for every chunk set of its corpus), then the profiles, then the keys with the corpora
   they reach.
 
-**Revisit when** a reader of the file is built, since it is then the one place that says which properties have a reader.
+The file is read by the import ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set)).
+
+---
+
+### D-54 A configuration file can be read into an instance without deleting a corpus, source or chunk set
+
+**Status.** Accepted and implemented, 2026-11-20. Not yet released.
+
+**Decision.** `POST /api/config/import` (admin only) takes a configuration file ([D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file))
+as its body. Without `apply=true` it is a dry run that changes nothing, and with it the file is applied. Both answer with the
+same list: one item for each corpus, source, chunk set, model profile and key in the file, and one for each corpus or source here
+that the file does not name. An item has a `kind`, a `name`, an `outcome` and a `detail`. The outcomes are `create`, `update`
+(made, or with a dry run would be), `unchanged`, `not imported`, `extra`, `refused` and `failed`, and the answer counts them.
+
+- A corpus is matched by name, ignoring case. One that is not here is made with `CorpusConfiguration.CreateCorpusAsync`, with
+  the file's description and default filters and a default chunk set taken from the file's default set, or the first by name
+  when none is marked (its provider, model, chunk size, overlap and boundary mode). The embedding model is probed, as for any
+  corpus. A name is trimmed, as the create request trims it.
+- A corpus that is here has its description, when the file has one, and its default filters updated with `UpdateCorpusAsync`.
+  A file with no description leaves the one here alone. The update replaces all four default filters with the file's four, so a
+  file that sets none clears them, and the item names the filters that differ.
+- A source is matched by its kind and its root, compared in the spelling a source is stored in (`docs/.` and `x/../docs` are
+  `docs`; case is ignored only where the filesystem ignores it). One that is here is updated with `UpdateSourceAsync`, and a value the file leaves
+  unset that the source sets is cleared, so the source inherits as the file says. One that is not here is added with
+  `AddSourceAsync`. A list that is `null` in the file inherits, and one that is `[]` selects or excludes nothing; both are kept.
+- Each change goes through those methods, so it is judged by the rules the screens and the agents' tools are judged by. A change
+  they refuse is reported as `refused` with their reason, and an error that is not a rule is reported as `failed`. Neither stops
+  the rest of the file. A change queues the refresh that the same change from a screen queues.
+
+**What it does not do.**
+
+- It deletes no corpus, source or chunk set. A corpus or source here that the file does not name is reported as `extra` and left
+  alone. Removal stays with the approval and `destroy` paths ([D-39](decisions.md#d-39-agents-ask-for-removals-and-a-person-decides),
+  [D-40](decisions.md#d-40-detaching-a-document-has-a-scope-of-its-own)).
+- It reads one chunk set, the default set of a corpus it makes. A set that is here is compared and reported `unchanged` or
+  `not imported` when it differs. A set that is not here is `not imported`, because adding one starts a backfill. The boundary
+  pattern and the `unitAware`, `sentenceAware` and `headingContext` flags of that default set are not applied, since a corpus is not
+  made with them, and the item names the ones the file carries.
+- It reads no model profile and no key. Each is `not imported`.
+- A dry run applies none of the rules of a change and probes no embedding model, so a refusal is known when the file is applied.
+
+**Why.** The file of D-53 had no reader, and rebuilding an instance from it meant making each corpus and source by hand. Going
+through `CorpusConfiguration` keeps one set of rules for every way in, and refusing to delete keeps a file that is older or
+smaller than the instance from removing what it does not mention.
+
+**Consequences.**
+
+- Applying a file to an instance that holds data queues a refresh for each source added or changed, and one for each corpus
+  whose default filters change and that has sources. On a large instance that is hours of work. A filter that is narrower than
+  the one it replaces removes the files it now excludes from the index when the refresh runs, as it does from a screen
+  ([D-36](decisions.md#d-36-a-configure-scope-agents-set-up-what-is-indexed)); the items for a filter change say so.
+- An apply cannot be undone as a whole. What it made is removed through the removal paths, and an update is changed back by
+  applying the file that held the earlier values.
+- Items follow the file: each corpus, then its sources in the file's order, its chunk sets by name and the sources of it that
+  are here and not in the file; the corpora here that the file does not name come after the last corpus. A file written by the
+  export is in name order. A file written by hand
+  can leave out a list or a block of filters, and is read as having none of it.
+- These refuse the whole file (400) before anything is made: another `format` or `version`, a null entry in any list (a glob included), a corpus
+  with no name or named twice (ignoring case and surrounding space), a source with no `rootPath` or with a kind other than
+  `workspace` or `githistory`, and a corpus that lists one source twice under spellings of one folder.
+- A step that fails for a reason that is not a rule is reported `failed`, and the catalogue is read again before the next corpus, so
+  what the failed step left tracked is not saved with it.
+
+**Revisit when** keys or chunk sets are to be read: the first needs a way to make a key without a secret and give it one on the
+Access page, and the second needs chunk set creation out of its endpoint.
 
 ---
 

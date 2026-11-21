@@ -291,6 +291,44 @@
         }
       }
     },
+    "/api/config/import": {
+      "post": {
+        "tags": [
+          "Config"
+        ],
+        "parameters": [
+          {
+            "name": "apply",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigExport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigImportResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events": {
       "get": {
         "tags": [
@@ -2018,6 +2056,32 @@
           }
         }
       },
+      "ConfigImportResult": {
+        "required": [
+          "applied",
+          "items",
+          "counts"
+        ],
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportItem"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      },
       "ConfiguredFilters": {
         "required": [
           "useGitignore",
@@ -3545,6 +3609,32 @@
               "integer"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "ImportItem": {
+        "required": [
+          "kind",
+          "name",
+          "outcome",
+          "detail"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

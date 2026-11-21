@@ -46,6 +46,7 @@ import { suggestedOverlap, usableChunkTokens } from './chunkLimits';
 import { ApprovalsView } from './Approvals';
 import { SearchesView } from './Searches';
 import { ConfigDownload } from './ConfigDownload';
+import { ConfigUpload } from './ConfigUpload';
 
 // The list and the parsing live in route.ts, so the URL and the switch below cannot
 // drift apart.
@@ -2972,6 +2973,8 @@ function SettingsView({ health }: { health: Health | null }) {
       </section>
 
       <ConfigDownload />
+
+      <ConfigUpload />
 
       <section className="card p-3.5">
         <h2 className="mt-0 mx-0 mb-3 text-base">Dependencies</h2>

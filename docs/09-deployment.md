@@ -606,6 +606,22 @@ it, and its `omitted` list names the corpora that hold them and any stored setti
 [D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file). Keep the file with the backups: the volume holds the same
 settings, but the file can be read, diffed and edited, and it is not tied to one catalogue.
 
+`POST /api/config/import` reads such a file into an instance ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set)). It adds corpora and sources that are missing and
+updates the filters and descriptions of those that are there. It deletes no corpus, source or chunk set, but a filter that is
+narrower than the one it replaces removes the files it now excludes from the index when the queued refresh runs. It reads one chunk set
+(a new corpus's default) and no key or model profile. The Settings screen has an **Import configuration** section that does the
+same, checking the file first. Without `apply=true` the endpoint only reports what it would do:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8477/api/session -H 'content-type: application/json' -d '{"password":"<admin password>"}' | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -s -X POST http://localhost:8477/api/config/import -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' --data-binary @dexicon-config.json
+curl -s -X POST 'http://localhost:8477/api/config/import?apply=true' -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' --data-binary @dexicon-config.json
+```
+
+An apply queues the same refresh jobs as making the changes by hand, so read the dry run first on an instance that holds data. A file that
+is refused as a whole (400) is another format or version, holds a null entry (a glob included), a corpus with no name or named twice, a source with no
+`rootPath` or a kind other than `workspace` or `githistory`, or lists one source twice under spellings of one folder.
+
 ## Upgrading
 
 1. Read the `CHANGELOG.md` section of every version between yours and the target. An
