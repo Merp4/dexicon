@@ -202,6 +202,27 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
         page.Matching.ShouldBe(ids.Length);
     }
 
+    [Fact]
+    public async Task ABackslashInAKeyOrCorpusNameIsMatchedLiterally()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            Row(db, At.AddMinutes(6), @"back\slash", SearchSurface.Api, @"x\y", hits: 1);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        (await PageAsync(key: @"\")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(key: @"back\")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(corpus: @"x\y")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(key: @"a\b")).Items.ShouldBeEmpty("the backslash is a character of the name, not an escape for the next one");
+    }
+
+    [Fact]
+    public async Task SpaceAroundACorpusFilterIsIgnored()
+    {
+        (await PageAsync(corpus: "  docs ")).Items.Select(i => i.Id).ShouldBe([6L, 5, 4, 3]);
+    }
+
     [Theory]
     [InlineData("carrier-pigeon")]
     [InlineData("1,2")]

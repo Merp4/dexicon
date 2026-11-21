@@ -294,3 +294,15 @@ describe('before the list has arrived', () => {
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
   });
 });
+
+describe('when the first list cannot be read', () => {
+  it('ends the wait and reports the error', async () => {
+    const onError = vi.fn();
+    listJobs.mockRejectedValue(new Error('refused'));
+
+    render(<JobsView corpora={corpora} live={{}} onError={onError} />);
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    await vi.waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
+  });
+});

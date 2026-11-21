@@ -347,3 +347,16 @@ describe('before the keys and the corpora have arrived', () => {
     expect(screen.queryByText('c1')).not.toBeInTheDocument();
   });
 });
+
+describe('when the first load fails', () => {
+  it('ends the wait and says so, and does not stay on Loading', async () => {
+    const onError = vi.fn();
+    listTokens.mockRejectedValue(new Error('refused'));
+    listCorpora.mockResolvedValue([]);
+
+    render(<AccessView onError={onError} />);
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
+  });
+});

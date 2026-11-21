@@ -283,6 +283,10 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
     [refreshCorpora],
   );
 
+  // The screens that read the corpus list wait for it. Approvals, Access (which loads its own), Settings and Models do not.
+  const needsCorpora = view === 'search' || view === 'corpora' || view === 'documents' || view === 'jobs' || view === 'searches';
+  const ready = corporaLoaded || !needsCorpora;
+
   // Present for an administrator and absent for a key, which cannot decide anything.
   const waiting = health?.pendingProposals ?? 0;
 
@@ -358,20 +362,20 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           </div>
         )}
 
-        {!corporaLoaded && (
+        {!ready && (
           <p className="m-0 flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Loading…</p>
         )}
-        {corporaLoaded && view === 'search' && <SearchView corpora={corpora} onError={setError} />}
-        {corporaLoaded && view === 'corpora' && !selected && (
+        {ready && view === 'search' && <SearchView corpora={corpora} onError={setError} />}
+        {ready && view === 'corpora' && !selected && (
           <CorporaView corpora={corpora} live={live} onRefresh={refreshCorpora} onOpen={setSelected} />
         )}
-        {corporaLoaded && view === 'corpora' && selected && (
+        {ready && view === 'corpora' && selected && (
           <CorpusDetail name={selected} live={live} onBack={() => setSelected(null)} onRefresh={refreshCorpora} onError={setError} />
         )}
-        {corporaLoaded && view === 'documents' && (
+        {ready && view === 'documents' && (
           <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
-        {corporaLoaded && (view === 'jobs' || view === 'searches') && (
+        {ready && (view === 'jobs' || view === 'searches') && (
           <Tabs
             label="Activity"
             value={view}
@@ -379,8 +383,8 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
             tabs={[{ value: 'jobs', label: 'Jobs' }, { value: 'searches', label: 'Search history' }]}
           />
         )}
-        {corporaLoaded && view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
-        {corporaLoaded && view === 'searches' && <SearchesView onError={setError} />}
+        {ready && view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
+        {ready && view === 'searches' && <SearchesView onError={setError} />}
         {view === 'approvals' && (
           <ApprovalsView
             onError={setError}
@@ -2392,7 +2396,12 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 
     const load = () => api.listJobs(routine ? 200 : 30, routine ? undefined : true)
       .then((next) => { if (!cancelled) setJobs(next); })
-      .catch((e) => { if (!cancelled) onError(e); });
+      .catch((e) => {
+        if (cancelled) return;
+        // A failed first load ends the wait, with the error above; a later one leaves the list that is there.
+        setJobs((current) => current ?? []);
+        onError(e);
+      });
 
     void load();
     const id = setInterval(load, busy ? 4000 : 30000);
@@ -2546,8 +2555,12 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
       const [keys, all] = await Promise.all([api.listTokens(), api.listCorpora()]);
       setTokens(keys);
       setCorpora(all);
+    } catch (e) {
+      onError(e);
+    } finally {
+      // A failed first load ends the wait too, with the error above and the list it could not fill left empty.
       setLoaded(true);
-    } catch (e) { onError(e); }
+    }
   }, [onError]);
 
   const nameOf = useCallback(
