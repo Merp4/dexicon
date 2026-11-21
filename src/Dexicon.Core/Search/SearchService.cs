@@ -63,8 +63,8 @@ public sealed record SearchRequest
     public string? Phrase { get; init; }
 
     /// <summary>
-    /// Which door the search came in by, for the search log. Each caller sets its own; one that leaves it out is
-    /// recorded as <see cref="SearchSurface.Other"/>, which the Searches screen shows as a defect.
+    /// Which interface the search came in by, for the search log. Each caller sets its own; one that leaves it out is
+    /// recorded as <see cref="SearchSurface.Other"/>, which the Search history screen shows as a defect.
     /// </summary>
     public SearchSurface Surface { get; init; }
 }

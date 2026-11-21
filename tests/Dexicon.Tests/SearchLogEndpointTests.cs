@@ -229,7 +229,7 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
 }
 
 /// <summary>
-/// All three doors, through the running application: a search, a context request, and a read of the log, each as the
+/// All three interfaces, through the running application: a search, a context request, and a read of the log, each as the
 /// UI or the hook makes it. The writer is the real hosted service, so a row is read once it has been written.
 /// </summary>
 [Collection(ConsoleOutputCollection.Name)]
@@ -338,7 +338,7 @@ public sealed class SearchLogHostTests : IDisposable
     }
 
     [Fact]
-    public async Task ASearchAContextRequestAndAnMcpCallEachLeaveARowNamingTheirDoor()
+    public async Task ASearchAContextRequestAndAnMcpCallEachLeaveARowNamingTheirInterface()
     {
         _store.OnSearch = q => new SearchResponse { Mode = q.Mode, Hits = [] };
 
@@ -397,7 +397,7 @@ public sealed class SearchLogHostTests : IDisposable
 }
 
 /// <summary>
-/// The log names the door each search came in by, and only the code that builds the request knows it. A caller added
+/// The log names the interface each search came in by, and only the code that builds the request knows it. A caller added
 /// later that leaves it out is recorded as <see cref="SearchSurface.Other"/>, and this scan fails first.
 /// </summary>
 public sealed class SearchSurfaceCoverageTests

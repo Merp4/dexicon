@@ -27,7 +27,7 @@ public sealed class NullSearchLog : ISearchLog
 /// <summary>
 /// The queue between searches and <see cref="SearchLogWriter"/>. Bounded, because the writer shares the
 /// catalogue's single writer with indexing and a long wait there must not become memory: when the queue is
-/// full the new row is dropped, and <see cref="Dropped"/> counts it for the Searches screen.
+/// full the new row is dropped, and <see cref="Dropped"/> counts it for the Search history screen.
 ///
 /// The text policy lives here, in one place, so no caller decides what is kept: the query is cut at
 /// <see cref="MaxQueryChars"/> characters, and removed when <c>StoreQueryText</c> is off.

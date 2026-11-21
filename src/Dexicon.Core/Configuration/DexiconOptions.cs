@@ -332,7 +332,7 @@ public sealed class LogOptions
 }
 
 /// <summary>
-/// The record of searches that ran, shown on the Searches screen. It holds what callers typed: the context
+/// The record of searches that ran, shown on the Search history screen. It holds what callers typed: the context
 /// hook, where it is registered, sends each prompt it handles in full, an agent's MCP queries are stored too, and the
 /// catalogue, and every backup of it, keeps the text for
 /// <see cref="RetentionDays"/> days. See docs/10-security-secrets.md.
@@ -343,7 +343,7 @@ public sealed class SearchLogOptions
     public bool Enabled { get; init; } = true;
 
     /// <summary>
-    /// False keeps each search's length, scores and timing and drops its text. The Searches screen then
+    /// False keeps each search's length, scores and timing and drops its text. The Search history screen then
     /// cannot say what was asked.
     /// </summary>
     public bool StoreQueryText { get; init; } = true;

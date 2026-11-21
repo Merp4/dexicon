@@ -196,7 +196,7 @@ public sealed class SearchLogTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ASearchRecordsTheDoorItCameInBy()
+    public async Task ASearchRecordsTheInterfaceItCameInBy()
     {
         var settings = Settings();
         var log = new SearchLog(settings);

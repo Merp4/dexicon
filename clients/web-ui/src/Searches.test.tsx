@@ -74,7 +74,7 @@ describe('what a row says', () => {
 });
 
 describe('the searches screen', () => {
-  it('lists each search with its door, its hits and its time taken', async () => {
+  it('lists each search with its interface, its hits and its time taken', async () => {
     listSearches.mockResolvedValue(page([
       item({ keyName: 'hook', surface: 'Context', corpora: 'docs,books', query: 'what is a chunk set', hits: 0, topScore: null }),
       item({ keyName: 'agent', degraded: true, tookMs: 910 }),
@@ -92,12 +92,12 @@ describe('the searches screen', () => {
     expect(within(rows[1]).getByText('keyword only')).toBeInTheDocument();
   });
 
-  it('flags a search that did not name its door', async () => {
+  it('flags a search that did not name its interface', async () => {
     listSearches.mockResolvedValue(page([item({ surface: 'Other' })]));
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText('Unnamed')).toBeInTheDocument();
+    expect(await screen.findByText('Unknown')).toBeInTheDocument();
   });
 
   it('says how long the text is kept and that backups hold it', async () => {
@@ -106,7 +106,7 @@ describe('the searches screen', () => {
     render(<SearchesView onError={vi.fn()} />);
 
     expect(await screen.findByText(/Kept for 30 days/)).toBeInTheDocument();
-    expect(screen.getByText(/is in backups of the catalogue/)).toBeInTheDocument();
+    expect(screen.getByText(/is included in backups of the catalogue/)).toBeInTheDocument();
   });
 
   it('says when no text is stored', async () => {
@@ -116,7 +116,7 @@ describe('the searches screen', () => {
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText(/The text of a query is not stored, only its length/)).toBeInTheDocument();
+    expect(await screen.findByText(/Query text is not stored, only its length/)).toBeInTheDocument();
     expect(screen.getByText(/Kept for 7 days/)).toBeInTheDocument();
   });
 
@@ -127,9 +127,8 @@ describe('the searches screen', () => {
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText(/The search log is switched off/)).toBeInTheDocument();
-    expect(screen.getByText('No searches recorded yet')).toBeInTheDocument();
-    expect(screen.getByText('The log is switched off.')).toBeInTheDocument();
+    expect(await screen.findAllByText(/The search log is switched off/)).toHaveLength(2);
+    expect(screen.getByText('No searches recorded')).toBeInTheDocument();
   });
 
   it('reports searches the log could not keep', async () => {
@@ -227,14 +226,14 @@ describe('the searches screen, branch by branch', () => {
     await vi.waitFor(() => expect(listSearches).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'hook', corpus: 'docs' })));
   });
 
-  it('says the log is kept for ever when retention is zero', async () => {
+  it('says the log is kept indefinitely when retention is zero', async () => {
     listSearches.mockResolvedValue(page([item()], {
       settings: { enabled: true, storesQueryText: true, retentionDays: 0, dropped: 0 },
     }));
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText(/Kept for ever/)).toBeInTheDocument();
+    expect(await screen.findByText(/Kept indefinitely/)).toBeInTheDocument();
   });
 
   it('says no search matches when a filter leaves nothing, and not that nothing was recorded', async () => {
@@ -246,8 +245,8 @@ describe('the searches screen, branch by branch', () => {
 
     await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
 
-    expect(await screen.findByText('No search matches')).toBeInTheDocument();
-    expect(screen.queryByText('No searches recorded yet')).not.toBeInTheDocument();
+    expect(await screen.findByText('No searches match')).toBeInTheDocument();
+    expect(screen.queryByText('No searches recorded')).not.toBeInTheDocument();
   });
 
   it('counts the searches that match, not the rows on the page', async () => {
@@ -263,7 +262,7 @@ describe('the searches screen, branch by branch', () => {
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText(/The log goes back/)).toBeInTheDocument();
+    expect(await screen.findByText(/The oldest was/)).toBeInTheDocument();
   });
 
   it('asks again when Refresh is pressed', async () => {
@@ -330,14 +329,14 @@ describe('the searches screen, branch by branch', () => {
     expect(screen.queryByText('under the old filter')).not.toBeInTheDocument();
   });
 
-  it('says for ever when retention is below zero too', async () => {
+  it('says indefinitely when retention is below zero too', async () => {
     listSearches.mockResolvedValue(page([item()], {
       settings: { enabled: true, storesQueryText: true, retentionDays: -1, dropped: 0 },
     }));
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findByText(/Kept for ever/)).toBeInTheDocument();
+    expect(await screen.findByText(/Kept indefinitely/)).toBeInTheDocument();
   });
 
   it('hands a failed load of older searches to the error banner', async () => {
@@ -369,12 +368,12 @@ describe('the searches screen, branch by branch', () => {
     expect(screen.getByText('the filtered answer')).toBeInTheDocument();
   });
 
-  it('marks a search that did not name its door as a defect, and one that did as ordinary', async () => {
+  it('marks a search that did not name its interface as a defect, and one that did as ordinary', async () => {
     listSearches.mockResolvedValue(page([item({ surface: 'Other' }), item({ surface: 'Mcp' })]));
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect((await screen.findByText('Unnamed')).className).toMatch(/warn/);
+    expect((await screen.findByText('Unknown')).className).toMatch(/warn/);
     expect(screen.getByText('MCP tool').className).not.toMatch(/warn/);
   });
 });
