@@ -309,6 +309,7 @@ row was asked for and has shipped.
 | ~~Import the configuration from a JSON file~~ | **Done** on main for corpora, their filters and their sources, not yet released. Chunk sets, keys and model profiles are not read. See [D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set). |
 | ~~Index Claude Code transcripts as conversations~~ | **Done** in 0.7.0. See [D-51](decisions.md#d-51-a-claude-code-transcript-is-indexed-as-its-conversation). |
 | ~~Record searches and show them~~ | **Done** on main, not yet released. See [D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record). |
+| Drop hits below a relevance threshold | A signal that keeps 95% of answerable queries and lets through at most 30% of the others, on `docs` and a code corpus in every chunk set measured. Measured on `docs` on 2026-11-21 and not met by `top1`, `gap`, `overlap`, `kwtop` or `gap\|overlap`: see [benchmarks](benchmarks.md#abstention-study-can-a-score-tell-a-prompt-the-corpus-cannot-answer-2026-11-21). |
 
 **Sizing an ask to index something new.** Most requests land on one of four seams, and
 the seam decides the size:
