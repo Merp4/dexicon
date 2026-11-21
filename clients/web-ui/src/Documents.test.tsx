@@ -468,6 +468,33 @@ describe('the list of files to upload', () => {
     expect(uploadDocuments).not.toHaveBeenCalled();
   });
 
+  it('does not add the same file twice within one drop either', async () => {
+    const { u, input } = await staged();
+
+    await u.upload(input, [
+      new File(['x'], 'notes.txt', { lastModified: 1000 }),
+      new File(['x'], 'notes.txt', { lastModified: 1000 }),
+      new File(['x'], 'notes.txt', { lastModified: 2000 }),
+    ]);
+
+    expect(await screen.findByText('2 files to upload')).toBeInTheDocument();
+  });
+
+  it('keeps the list, and Upload ready again, when the whole upload fails', async () => {
+    const onError = vi.fn();
+    uploadDocuments.mockRejectedValue(new Error('Service Unavailable'));
+    const u = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={[corpus('library')]} onRefresh={async () => {}} onError={onError} />);
+    await u.upload(container.querySelector('input[type="file"]') as HTMLInputElement, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+
+    await u.click(await screen.findByRole('button', { name: 'Upload 2 files' }));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Service Unavailable' })));
+    expect(screen.getByText('2 files to upload')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload 2 files' })).toBeEnabled();
+    expect(localStorage.getItem('dexicon.uploadTarget')).toBeNull();
+  });
+
   it('adds to the list on a second drop, and does not add the same file twice', async () => {
     const { u, input } = await staged();
     const same = new File(['x'], 'notes.txt', { lastModified: 1000 });

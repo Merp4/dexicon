@@ -39,9 +39,8 @@ const sameFile = (a: File, b: File) => a.name === b.name && a.size === b.size &&
  * Files are staged first: a drop or a choice adds them to a list, and the corpus they go into is chosen beside that list, so
  * the drop is never refused for lack of a target and nothing is uploaded until Upload is pressed.
  *
- * The thing this screen has to make obvious, because it is the whole point of the
- * design: a document is stored and extracted ONCE, and each corpus holds its own
- * chunking of it. So every row shows the blob, and underneath it every corpus that
+ * What this screen has to make obvious, because it is the point of the design: a document
+ * is stored and extracted once, and each corpus holds its own chunking of it. So every row shows the blob, and underneath it every corpus that
  * attaches it, with that corpus's chunk settings and resulting chunk count side by
  * side, where they can be compared.
  */
@@ -132,7 +131,11 @@ export function DocumentsView({
   // Adds files to the list. A file already in it (same name, size and date) is not added twice.
   const stage = useCallback((files: File[]) => {
     if (uploading.current) return;
-    setStaged((current) => [...current, ...files.filter((f) => !current.some((c) => sameFile(c, f)))]);
+    setStaged((current) => {
+      const next = [...current];
+      for (const f of files) if (!next.some((c) => sameFile(c, f))) next.push(f);
+      return next;
+    });
   }, []);
 
   const upload = useCallback(
@@ -152,7 +155,7 @@ export function DocumentsView({
       try {
         const result = await api.uploadDocuments(uploadTo, files);
         rememberTarget(uploadTo);
-        // The files are with the server now. Those it refused are named below, and are added again from there.
+        // The files are with the server now. Those it refused are named below, and are dropped on the zone again.
         setStaged([]);
         // A batch is accepted when any file is stored. The files the server refused (over the
         // size cap, empty, a name with a control character or over 260 characters, a rename onto
@@ -234,8 +237,8 @@ export function DocumentsView({
         <section aria-label="Files to upload" className="card grid gap-3 p-3.5">
           <h2 className="m-0 text-base">{count(staged.length, 'file')} to upload</h2>
           <ul className="m-0 grid list-none gap-1 p-0 text-sm">
-            {staged.map((f, i) => (
-              <li key={`${f.name}-${f.size}-${i}`} className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-1.5">
+            {staged.map((f) => (
+              <li key={`${f.name}-${f.size}-${f.lastModified}`} className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-1.5">
                 <span className="[overflow-wrap:anywhere]">{f.name}</span>
                 <span className="text-xs text-muted-foreground">{formatBytes(f.size)}</span>
                 <span className="flex-1" />
