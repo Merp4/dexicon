@@ -541,3 +541,58 @@ questions the intervals are wide, and the three-way split leaves 4 questions in 
 The corpus and the questions are not in the repository because they are a person's conversations. The harness is a
 console project over `Dexicon.Core` that extracts and chunks with the production code, and a script that embeds, ranks and
 scores; both are kept with the corpus.
+
+## Abstention study: can a score tell a prompt the corpus cannot answer? (2026-11-21)
+
+Should the context hook, or a search, drop its hits when the best score is low? That needs a signal that keeps almost every
+query the corpus can answer and lets few of the others through. The question was measured before any gate was designed, with
+a decision rule that is fixed in `scripts/bench/abstention-probe.py` and was committed before the first run.
+
+**Decision rule.** One signal must, on half B of the ids and for every chunk set measured, keep at least 95% of the on-corpus and
+identifier queries and let through at most 30% of the off-corpus prompts. Otherwise no gate is built.
+
+**Signals**, per query and chunk set, from one semantic and one keyword search of five hits each:
+
+| Signal | Meaning |
+|---|---|
+| `top1` | cosine of the first semantic hit |
+| `gap` | first minus fifth semantic cosine |
+| `overlap` | chunks that the semantic and keyword top five share |
+| `kwtop` | raw score of the first keyword hit |
+| `gap\|overlap` | passes when `gap` or `overlap` is at least its threshold |
+
+**Data.** Corpus `docs` (16 files), searched in its two chunk sets: `gemma` (`embeddinggemma`) and `default`
+(`nomic-embed-text`). On-corpus: the 55 queries of `queries-docs.json` and 15 identifiers that occur in `docs/` (70 in all).
+Off-corpus: 160 prompts from Claude Code transcripts of projects other than this one, taken in order of a hash of the text from 1,024 distinct
+prompts. Each was labelled by reading it with the corpus's top three hits: 159 are `off`
+(the documentation holds no answer), 1 is left out as unsure, and none is `answerable`. Almost all are directives and remarks to agents about their
+work, not questions. Halves are fixed by a hash of the id: 35 on-corpus and 78 or 81 off-corpus per half.
+A threshold is the largest value that keeps 95% of half A's on-corpus queries; the table is half B.
+
+| Chunk set | Signal | AUC (all) | Retention | Off-corpus passing |
+|---|---|---|---|---|
+| `docs:gemma` | `top1` | 0.766 | 0.91 | 0.73 |
+| | `gap` | 0.783 | 0.89 | 0.73 |
+| | `overlap` | 0.781 | 1.00 | 1.00 |
+| | `kwtop` | 0.661 | 1.00 | 0.90 |
+| | `gap\|overlap` | | 0.97 | 0.74 |
+| `docs:default` | `top1` | 0.770 | 0.91 | 0.91 |
+| | `gap` | 0.791 | 0.97 | 0.85 |
+| | `overlap` | 0.773 | 1.00 | 1.00 |
+| | `kwtop` | 0.580 | 1.00 | 0.99 |
+| | `gap\|overlap` | | 0.97 | 0.85 |
+
+**Result.** No signal meets the rule on either chunk set. At the retention the rule asks for, 73% to 100% of the off-corpus
+prompts still pass, against a limit of 30%. The best separation by AUC is `gap`, at 0.78 and 0.79; `top1` is 0.77 on both and `kwtop` 0.66 and 0.58. On half B, retention fell below the 95% the threshold was chosen for: 0.91 for `top1` and 0.89 for `gap` on `gemma`, and 0.91 for `top1` on `default`.
+
+**Labels.** The result does not depend on them: for the `gemma` `top1` row, more than 80% of the 59 passing prompts of half B would have to be prompts the
+documentation answers for the rule to be met. The labels were made by Claude (Sonnet 5.5). The owner's review
+of every fifth label is pending, and its outcome goes in the results file.
+
+**Not measured.** The code corpus. The rule needs every chunk set to pass, so a pass there could not change the outcome, and measuring it needed a
+second chunk set on a live corpus. The prompts are a person's private text and are not in the repository; the results file holds counts and
+thresholds only (`scripts/bench/results-abstention-docs-2026-11-21.json`). The negatives are conversational, so they are an easy case: a prompt
+that is a question on a nearby topic that the corpus only partly answers would be harder, and no signal separated the easy case.
+
+**Outcome.** No gate is built and no `minSimilarity` parameter is added. The trigger in M5 is a signal that meets the rule on the data
+above. Re-run `scripts/bench/abstention-probe.py` on another model, or another corpus, to test a new candidate.

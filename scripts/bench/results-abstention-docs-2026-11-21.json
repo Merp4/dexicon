@@ -1,0 +1,294 @@
+{
+ "corpus": "docs",
+ "labeller": "claude (sonnet 5.5), 2026-11-21, from the prompt and the corpus's top three hybrid hits",
+ "reviewed_by_owner": null,
+ "rule": {
+  "retention": 0.95,
+  "off_pass_max": 0.3
+ },
+ "sets": {
+  "docs:gemma": {
+   "n": {
+    "positives": 70,
+    "off": 159,
+    "answerable": 0,
+    "unlabelled_or_unsure": 1,
+    "A_pos": 35,
+    "A_off": 78,
+    "B_pos": 35,
+    "B_off": 81
+   },
+   "signals": {
+    "top1": {
+     "threshold": 0.3313931,
+     "auc": {
+      "all": 0.766,
+      "A": 0.804,
+      "B": 0.727
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.679
+     },
+     "B": {
+      "retention": 0.914,
+      "retention_ci": [
+       0.776,
+       0.97
+      ],
+      "off_pass": 0.728,
+      "off_pass_ci": [
+       0.623,
+       0.813
+      ]
+     },
+     "rule_met": false
+    },
+    "gap": {
+     "threshold": 0.02325851000000001,
+     "auc": {
+      "all": 0.783,
+      "A": 0.769,
+      "B": 0.798
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.744
+     },
+     "B": {
+      "retention": 0.886,
+      "retention_ci": [
+       0.74,
+       0.955
+      ],
+      "off_pass": 0.728,
+      "off_pass_ci": [
+       0.623,
+       0.813
+      ]
+     },
+     "rule_met": false
+    },
+    "overlap": {
+     "threshold": 0.0,
+     "auc": {
+      "all": 0.781,
+      "A": 0.722,
+      "B": 0.846
+     },
+     "A": {
+      "retention": 1.0,
+      "off_pass": 1.0
+     },
+     "B": {
+      "retention": 1.0,
+      "retention_ci": [
+       0.901,
+       1.0
+      ],
+      "off_pass": 1.0,
+      "off_pass_ci": [
+       0.955,
+       1.0
+      ]
+     },
+     "rule_met": false
+    },
+    "kwtop": {
+     "threshold": 10.084112,
+     "auc": {
+      "all": 0.661,
+      "A": 0.665,
+      "B": 0.657
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.962
+     },
+     "B": {
+      "retention": 1.0,
+      "retention_ci": [
+       0.901,
+       1.0
+      ],
+      "off_pass": 0.901,
+      "off_pass_ci": [
+       0.817,
+       0.949
+      ]
+     },
+     "rule_met": false
+    },
+    "gap|overlap": {
+     "threshold": {
+      "gap": 0.02646314999999999,
+      "overlap": 1.0
+     },
+     "auc": null,
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.718
+     },
+     "B": {
+      "retention": 0.971,
+      "retention_ci": [
+       0.855,
+       0.995
+      ],
+      "off_pass": 0.741,
+      "off_pass_ci": [
+       0.636,
+       0.824
+      ]
+     },
+     "rule_met": false
+    }
+   }
+  },
+  "docs:default": {
+   "n": {
+    "positives": 70,
+    "off": 159,
+    "answerable": 0,
+    "unlabelled_or_unsure": 1,
+    "A_pos": 35,
+    "A_off": 78,
+    "B_pos": 35,
+    "B_off": 81
+   },
+   "signals": {
+    "top1": {
+     "threshold": 0.5992621,
+     "auc": {
+      "all": 0.77,
+      "A": 0.783,
+      "B": 0.763
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.897
+     },
+     "B": {
+      "retention": 0.914,
+      "retention_ci": [
+       0.776,
+       0.97
+      ],
+      "off_pass": 0.914,
+      "off_pass_ci": [
+       0.832,
+       0.958
+      ]
+     },
+     "rule_met": false
+    },
+    "gap": {
+     "threshold": 0.010160559999999985,
+     "auc": {
+      "all": 0.791,
+      "A": 0.716,
+      "B": 0.863
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.897
+     },
+     "B": {
+      "retention": 0.971,
+      "retention_ci": [
+       0.855,
+       0.995
+      ],
+      "off_pass": 0.852,
+      "off_pass_ci": [
+       0.759,
+       0.913
+      ]
+     },
+     "rule_met": false
+    },
+    "overlap": {
+     "threshold": 0.0,
+     "auc": {
+      "all": 0.773,
+      "A": 0.753,
+      "B": 0.792
+     },
+     "A": {
+      "retention": 1.0,
+      "off_pass": 1.0
+     },
+     "B": {
+      "retention": 1.0,
+      "retention_ci": [
+       0.901,
+       1.0
+      ],
+      "off_pass": 1.0,
+      "off_pass_ci": [
+       0.955,
+       1.0
+      ]
+     },
+     "rule_met": false
+    },
+    "kwtop": {
+     "threshold": 7.295515,
+     "auc": {
+      "all": 0.58,
+      "A": 0.55,
+      "B": 0.608
+     },
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.974
+     },
+     "B": {
+      "retention": 1.0,
+      "retention_ci": [
+       0.901,
+       1.0
+      ],
+      "off_pass": 0.988,
+      "off_pass_ci": [
+       0.933,
+       0.998
+      ]
+     },
+     "rule_met": false
+    },
+    "gap|overlap": {
+     "threshold": {
+      "gap": 0.010160559999999985,
+      "overlap": 6.0
+     },
+     "auc": null,
+     "A": {
+      "retention": 0.971,
+      "off_pass": 0.897
+     },
+     "B": {
+      "retention": 0.971,
+      "retention_ci": [
+       0.855,
+       0.995
+      ],
+      "off_pass": 0.852,
+      "off_pass_ci": [
+       0.759,
+       0.913
+      ]
+     },
+     "rule_met": false
+    }
+   }
+  }
+ },
+ "rule_met_on_every_set": {
+  "top1": false,
+  "gap": false,
+  "overlap": false,
+  "kwtop": false,
+  "gap|overlap": false
+ }
+}

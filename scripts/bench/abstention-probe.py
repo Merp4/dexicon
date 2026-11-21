@@ -209,11 +209,9 @@ def wilson(k, n, z=1.96):
 
 
 def passes(rec, rule):
-    if isinstance(rule, tuple):
-        tg, to = rule
-        return rec["gap"] >= tg or rec["overlap"] >= to
-    name, t = rule
-    return rec[name] >= t
+    if rule[0] == "or":
+        return rec["gap"] >= rule[1] or rec["overlap"] >= rule[2]
+    return rec[rule[0]] >= rule[1]
 
 
 def rate(recs, rule):
@@ -232,7 +230,7 @@ def threshold_or(pos_a, neg_a):
     best = None
     for tg in sorted({r["gap"] for r in pos_a}) + [float("inf")]:
         for to in range(0, 7):
-            rule = (tg, float(to))
+            rule = ("or", tg, float(to))
             if sum(passes(r, rule) for r in pos_a) / len(pos_a) < RETENTION:
                 continue
             off = rate(neg_a, rule)
@@ -264,7 +262,7 @@ def evaluate(records, labels, corpus):
         entry = {}
         if name == OR_RULE:
             rule = threshold_or(A(pos), A(neg)) if A(pos) else None
-            entry["threshold"] = None if rule is None else {"gap": rule[0] if rule[0] != float("inf") else None, "overlap": rule[1]}
+            entry["threshold"] = None if rule is None else {"gap": rule[1] if rule[1] != float("inf") else None, "overlap": rule[2]}
             use = rule
             entry["auc"] = None
         else:
