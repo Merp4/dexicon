@@ -7,12 +7,9 @@ import {
 import { count } from './lib/units';
 
 /**
- * The searches that ran, newest first: who asked, by which door, what, and how it went.
- *
- * It answers "what did agents ask that came back empty", which nothing else records. A search that
- * was refused before it ran (an unknown corpus) is not here. The text is what callers typed, and the
- * context hook sends each prompt it handles, so this screen says how long it keeps them and whether
- * it keeps the text at all.
+ * The searches that ran, newest first: which key, through which interface, what was asked and the result. A search
+ * refused before it ran (an unknown corpus) is not listed. The text is what callers sent, and the context hook sends each
+ * prompt it handles, so the screen states the retention period and whether the text is stored.
  */
 
 export type Which = 'all' | 'nothing';
@@ -24,7 +21,7 @@ const SURFACE_LABEL: Record<string, string> = {
   Mcp: 'MCP tool',
   Api: 'REST',
   Context: 'Context',
-  Other: 'Unnamed',
+  Other: 'Unknown',
 };
 
 const PAGE = 50;
@@ -117,9 +114,9 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="m-0 text-lg font-semibold">Searches</h1>
+          <h1 className="m-0 text-lg font-semibold">Search history</h1>
           <p className="m-0 mt-1 max-w-[70ch] text-sm text-muted-foreground">
-            Every search that ran, whoever made it. Use it to see what agents asked that found nothing.
+            Searches that have run, newest first. Choose Found nothing to see what agents asked that returned no hits.
           </p>
         </div>
         <Button onClick={() => setReload((n) => n + 1)}>
@@ -130,16 +127,16 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
 
       {settings && !settings.enabled && (
         <Notice tone="warn">
-          The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>). Nothing new is recorded.
-          Rows already written stay until retention removes them, which it never does when retention is 0 days or fewer.
+          The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>), so new searches are not recorded.
+          Existing rows are removed when they pass the retention period, and are never removed when it is 0 days or less.
         </Notice>
       )}
       {settings?.enabled && (
         <Notice tone="neutral">
-          Kept for {settings.retentionDays <= 0 ? 'ever' : count(settings.retentionDays, 'day')}.{' '}
+          {settings.retentionDays <= 0 ? 'Kept indefinitely.' : `Kept for ${count(settings.retentionDays, 'day')}.`}{' '}
           {settings.storesQueryText
-            ? 'The text of each query is stored, including every prompt the context hook sends, and is in backups of the catalogue.'
-            : 'The text of a query is not stored, only its length.'}
+            ? 'Query text is stored, including each prompt the context hook sends, and is included in backups of the catalogue.'
+            : 'Query text is not stored, only its length.'}
           {settings.dropped > 0 && <> {count(settings.dropped, 'search', 'searches')} could not be recorded since the server started.</>}
         </Notice>
       )}
@@ -155,8 +152,8 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
           ]}
         />
         <div className="w-40">
-          <Select value={surface} onValueChange={setSurface} aria-label="Door">
-            <SelectItem value={ANY}>Any door</SelectItem>
+          <Select value={surface} onValueChange={setSurface} aria-label="Interface">
+            <SelectItem value={ANY}>Any interface</SelectItem>
             {SURFACES.map((s) => (
               <SelectItem key={s} value={s}>{SURFACE_LABEL[s[0].toUpperCase() + s.slice(1)] ?? s}</SelectItem>
             ))}
@@ -187,12 +184,12 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
 
       {rows !== null && rows.length === 0 && (
         filtered
-          ? <Empty title="No search matches" hint="Clear a filter to see more." />
+          ? <Empty title="No searches match" hint="Remove a filter to see more." />
           : <Empty
-              title="No searches recorded yet"
+              title="No searches recorded"
               hint={settings?.enabled === false
-                ? 'The log is switched off.'
-                : 'A search from the Search screen, an agent or the context hook appears here within a moment.'}
+                ? 'The search log is switched off.'
+                : 'Searches from the Search screen, agents and the context hook appear here.'}
             />
       )}
 
@@ -200,7 +197,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
         <>
           <p className="m-0 text-sm text-muted-foreground" aria-live="polite">
             {count(first.matching, 'search', 'searches')} {filtered ? 'match' : 'recorded'}
-            {first.oldestUtc && <> The log goes back <time title={localTime(first.oldestUtc)}>{relativeTime(first.oldestUtc)}</time>.</>}
+            {first.oldestUtc && <> The oldest was <time title={localTime(first.oldestUtc)}>{relativeTime(first.oldestUtc)}</time>.</>}
           </p>
           <div className="overflow-x-auto rounded-lg border border-border bg-card">
             <table className="w-full min-w-[900px] border-collapse text-left text-sm">
@@ -208,7 +205,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <th scope="col" className="px-3 py-2 font-medium">When</th>
                   <th scope="col" className="px-3 py-2 font-medium">Key</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Door</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Interface</th>
                   <th scope="col" className="px-3 py-2 font-medium">Corpora</th>
                   <th scope="col" className="px-3 py-2 font-medium">Asked</th>
                   <th scope="col" className="px-3 py-2 text-right font-medium">Hits</th>

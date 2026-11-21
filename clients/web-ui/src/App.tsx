@@ -21,11 +21,11 @@ import {
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
-  Notice, Segmented, Select, SelectItem, Spinner, formatBytes, localTime, relativeTime, stateTone,
+  Notice, Segmented, Select, SelectItem, Spinner, Tabs, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
-  ArrowLeft, Check, Database, FileText, History, Key, ListChecks, LogOut, Plus, RefreshCw, RotateCcw,
-  Search, Settings, ShieldCheck, Sliders, SlidersHorizontal, Trash2, TriangleAlert,
+  Activity, ArrowLeft, Check, Database, FileText, Key, LogOut, Plus, RefreshCw, RotateCcw,
+  Search, Settings, ShieldCheck, SlidersHorizontal, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { historyContent, sourceName } from './lib/sources';
@@ -282,17 +282,17 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
   // Present for an administrator and absent for a key, which cannot decide anything.
   const waiting = health?.pendingProposals ?? 0;
 
-  const nav = [
-    { id: 'search', label: 'Search', Icon: Search },
-    { id: 'corpora', label: 'Corpora', Icon: Database },
-    { id: 'documents', label: 'Documents', Icon: FileText },
-    { id: 'jobs', label: 'Jobs', Icon: ListChecks },
-    { id: 'searches', label: 'Searches', Icon: History },
-    { id: 'approvals', label: 'Approvals', Icon: ShieldCheck },
-    { id: 'models', label: 'Models', Icon: Sliders },
-    { id: 'access', label: 'Access', Icon: Key },
-    { id: 'settings', label: 'Settings', Icon: Settings },
-  ] satisfies { id: View; label: string; Icon: typeof Search }[];
+  // Two items stand for a section of screens, each with its own address: Activity holds Jobs and Search history, and
+  // Settings holds General and Models. `open` is where the item goes, `views` are the screens it is current for.
+  const nav: { id: string; label: string; Icon: typeof Search; open: View; views: readonly View[] }[] = [
+    { id: 'search', label: 'Search', Icon: Search, open: 'search', views: ['search'] },
+    { id: 'corpora', label: 'Corpora', Icon: Database, open: 'corpora', views: ['corpora'] },
+    { id: 'documents', label: 'Documents', Icon: FileText, open: 'documents', views: ['documents'] },
+    { id: 'activity', label: 'Activity', Icon: Activity, open: 'jobs', views: ['jobs', 'searches'] },
+    { id: 'approvals', label: 'Approvals', Icon: ShieldCheck, open: 'approvals', views: ['approvals'] },
+    { id: 'access', label: 'Access', Icon: Key, open: 'access', views: ['access'] },
+    { id: 'settings', label: 'Settings', Icon: Settings, open: 'settings', views: ['settings', 'models'] },
+  ];
 
   return (
     <div className="flex flex-col min-h-[100dvh]">
@@ -313,18 +313,18 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           {nav.map((n) => (
             <Chip
               key={n.id}
-              active={view === n.id}
+              active={n.views.includes(view)}
               flat
               // `false`, not undefined, on the others: it is a valid aria-current value that
               // screen readers treat as absent, and it keeps every item in the bar
               // declaring the same kind of thing. Leaving it off made Chip fall back to
               // toggle semantics and announce the six you are NOT on as buttons you had
               // not pressed.
-              aria-current={view === n.id ? 'page' : false}
+              aria-current={n.views.includes(view) ? 'page' : false}
               // Said whole, because the label and the count are separate elements and a screen
               // reader would join them as "Approvals3".
               aria-label={n.id === 'approvals' && waiting > 0 ? `Approvals, ${waiting} waiting` : undefined}
-              onClick={() => { setView(n.id); setSelected(null); }}
+              onClick={() => { setView(n.open); setSelected(null); }}
             >
               <n.Icon />
               {n.label}
@@ -364,6 +364,14 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
         {view === 'documents' && (
           <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
+        {(view === 'jobs' || view === 'searches') && (
+          <Tabs
+            label="Activity"
+            value={view}
+            onChange={setView}
+            tabs={[{ value: 'jobs', label: 'Jobs' }, { value: 'searches', label: 'Search history' }]}
+          />
+        )}
         {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
         {view === 'searches' && <SearchesView onError={setError} />}
         {view === 'approvals' && (
@@ -373,6 +381,14 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           />
         )}
         {view === 'access' && <AccessView onError={setError} />}
+        {(view === 'settings' || view === 'models') && (
+          <Tabs
+            label="Settings"
+            value={view}
+            onChange={setView}
+            tabs={[{ value: 'settings', label: 'General' }, { value: 'models', label: 'Models' }]}
+          />
+        )}
         {view === 'models' && <ModelsView />}
         {view === 'settings' && <SettingsView health={health} />}
       </main>

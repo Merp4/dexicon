@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  Badge, Button, Chip, Field, Input, Notice, Select, SelectItem, relativeTime, stateTone,
+  Badge, Button, Chip, Field, Input, Notice, Select, SelectItem, Tabs, relativeTime, stateTone,
 } from './ui';
 
 /**
@@ -285,5 +286,72 @@ describe('Notice', () => {
 
     const body = screen.getByText('Still indexing.');
     expect(body.className).not.toMatch(/text-\[var\(--warn/);
+  });
+});
+
+describe('Tabs', () => {
+  const tabs = [{ value: 'a', label: 'First' }, { value: 'b', label: 'Second' }, { value: 'c', label: 'Third' }] as const;
+
+  it('marks the selected tab, and puts only that tab in the tab order', () => {
+    render(<Tabs label="Section" value="b" onChange={() => {}} tabs={tabs} />);
+
+    expect(screen.getByRole('tablist', { name: 'Section' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Second' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Second' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'First' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'First' })).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('reports the tab that is clicked', async () => {
+    const onChange = vi.fn();
+    render(<Tabs label="Section" value="a" onChange={onChange} tabs={tabs} />);
+
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Third' }));
+
+    expect(onChange).toHaveBeenCalledWith('c');
+  });
+
+  it('moves between tabs with the arrow keys, wrapping at both ends', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<Tabs label="Section" value="a" onChange={onChange} tabs={tabs} />);
+
+    screen.getByRole('tab', { name: 'First' }).focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: 'Third' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'First' })).toHaveFocus();
+
+    expect(onChange.mock.calls).toEqual([['c'], ['a']]);
+  });
+
+  it('goes to the first and last tab with Home and End', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<Tabs label="Section" value="b" onChange={onChange} tabs={tabs} />);
+
+    screen.getByRole('tab', { name: 'Second' }).focus();
+    await user.keyboard('{End}');
+    await user.keyboard('{Home}');
+
+    expect(onChange.mock.calls).toEqual([['c'], ['a']]);
+  });
+
+  it('handles a key it uses and leaves the others to the browser', () => {
+    render(<Tabs label="Section" value="a" onChange={() => {}} tabs={tabs} />);
+    const first = screen.getByRole('tab', { name: 'First' });
+
+    expect(fireEvent.keyDown(first, { key: 'ArrowRight' })).toBe(false);
+    expect(fireEvent.keyDown(first, { key: 'Tab' })).toBe(true);
+  });
+
+  it('puts only the newly selected tab in the tab order', () => {
+    const { rerender } = render(<Tabs label="Section" value="a" onChange={() => {}} tabs={tabs} />);
+
+    rerender(<Tabs label="Section" value="c" onChange={() => {}} tabs={tabs} />);
+
+    expect(screen.getByRole('tab', { name: 'Third' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'First' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Second' })).toHaveAttribute('tabindex', '-1');
   });
 });

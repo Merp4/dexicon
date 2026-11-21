@@ -191,6 +191,73 @@ export function Segmented<T extends string>({
 }
 
 /**
+ * Tabs for the screens of one section, such as Jobs and Search history under Activity. Each tab is a screen with its own
+ * address, so the caller holds the selection (the URL) and this only shows it. One tab stop; Left and Right move between
+ * tabs and wrap, Home and End go to the first and last. There is no tab panel to point at, so a tab does not set
+ * `aria-controls`.
+ */
+export function Tabs<T extends string>({
+  value,
+  onChange,
+  tabs,
+  label,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  tabs: readonly { value: T; label: string }[];
+  /** Names the tab list for a screen reader. */
+  label: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function go(next: number) {
+    onChange(tabs[next].value);
+    refs.current[next]?.focus();
+  }
+
+  return (
+    <div role="tablist" aria-label={label} className="mb-4 flex gap-1 border-b border-border">
+      {tabs.map((tab, i) => {
+        const selected = tab.value === value;
+        return (
+          <button
+            key={tab.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(tab.value)}
+            onKeyDown={(e) => {
+              const target =
+                e.key === 'ArrowRight' ? (i + 1) % tabs.length
+                : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length
+                : e.key === 'Home' ? 0
+                : e.key === 'End' ? tabs.length - 1
+                : null;
+              if (target === null) return;
+              e.preventDefault();
+              go(target);
+            }}
+            className={cn(
+              '-mb-px border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap outline-none',
+              'focus-visible:ring-[3px] focus-visible:ring-ring/50',
+              selected
+                ? 'border-[var(--accent)] text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * A whole card that is one click target.
  *
  * A button, not a div with an onClick: it is reachable by Tab, activates on Enter and

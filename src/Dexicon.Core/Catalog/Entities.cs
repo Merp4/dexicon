@@ -713,7 +713,7 @@ public sealed class Proposal
     public string? Error { get; set; }
 }
 
-/// <summary>Which door a search came in by. <see cref="Other"/> is a caller that did not say, and reads as a defect in the log.</summary>
+/// <summary>Which interface a search came in by. <see cref="Other"/> is a caller that did not say, and reads as a defect in the log.</summary>
 public enum SearchSurface { Other = 0, Api = 1, Mcp = 2, Context = 3 }
 
 /// <summary>
