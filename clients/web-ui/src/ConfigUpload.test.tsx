@@ -74,10 +74,49 @@ describe('the import screen', () => {
     expect(importConfig).toHaveBeenCalledWith(file, false);
     expect(await screen.findByText(/Checked, nothing changed: 2 create, 1 unchanged, 1 refused/)).toBeInTheDocument();
     const rows = within(screen.getByRole('list', { name: 'What the file does' })).getAllByRole('listitem');
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
     expect(within(rows[0]).getByText('create')).toBeInTheDocument();
     expect(within(rows[0]).getByText('Would be made with a chunk set named default.')).toBeInTheDocument();
-    expect(within(rows[3]).getByText('refused').className).toMatch(/warn/);
+    expect(within(rows[2]).getByText('refused').className).toMatch(/warn/);
+  });
+
+  it('lists what changes or went wrong first, and keeps the unchanged rows in a group under their count', async () => {
+    importConfig.mockResolvedValue(plan({
+      counts: { unchanged: 3, update: 1 },
+      items: [
+        { kind: 'corpus', name: 'First', outcome: 'unchanged', detail: null },
+        { kind: 'corpus', name: 'Second', outcome: 'unchanged', detail: null },
+        { kind: 'source', name: 'Second: workspace notes', outcome: 'update', detail: 'Would change its filters.' },
+        { kind: 'corpus', name: 'Third', outcome: 'unchanged', detail: null },
+      ],
+    }));
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+    const changes = await screen.findByRole('list', { name: 'What the file does' });
+
+    expect(within(changes).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(changes).getByText('Second: workspace notes')).toBeInTheDocument();
+    const group = screen.getByText('3 unchanged').closest('details') as HTMLElement;
+    expect(group).not.toHaveAttribute('open');
+    expect(within(group).getAllByRole('listitem', { hidden: true }).map((li) => li.textContent)).toEqual([
+      expect.stringContaining('First'), expect.stringContaining('Second'), expect.stringContaining('Third'),
+    ]);
+  });
+
+  it('shows no group when nothing is unchanged', async () => {
+    importConfig.mockResolvedValue(plan());
+    const user = userEvent.setup();
+    render(<ConfigUpload />);
+    await upload(user, JSON.stringify(file));
+    importConfig.mockResolvedValue(plan({ counts: { create: 1 }, items: [{ kind: 'corpus', name: 'Papers', outcome: 'create', detail: null }] }));
+
+    await user.click(screen.getByRole('button', { name: 'Check the file' }));
+    await screen.findByText(/1 create/);
+
+    expect(screen.queryByText(/unchanged$/)).not.toBeInTheDocument();
   });
 
   it('applies only after the file was checked, and asks before it does', async () => {
@@ -209,9 +248,10 @@ describe('the import screen', () => {
     await upload(user, JSON.stringify(file));
 
     await user.click(screen.getByRole('button', { name: 'Check the file' }));
-    const list = await screen.findByRole('list', { name: 'What the file does' });
+    await screen.findByRole('list', { name: 'What the file does' });
 
-    const tone = (outcome: string) => within(within(list).getByText(`corpus ${outcome}`).closest('li') as HTMLElement).getByText(outcome).className;
+    // The unchanged row is in a closed group, which the document still holds.
+    const tone = (outcome: string) => within(screen.getByText(`corpus ${outcome}`).closest('li') as HTMLElement).getByText(outcome).className;
     expect(tone('create')).toMatch(/accent/);
     expect(tone('update')).toMatch(/accent/);
     expect(tone('unchanged')).toMatch(/bg-muted/);

@@ -186,6 +186,44 @@ public sealed class SearchLogEndpointTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("AGE", null, new[] { 6L, 2, 1 })]
+    [InlineData("gent", null, new[] { 6L, 2, 1 })]
+    [InlineData(" agent ", null, new[] { 6L, 2, 1 })]
+    [InlineData(null, "DOCS", new[] { 6L, 5, 4, 3 })]
+    [InlineData(null, "oc", new[] { 6L, 5, 4, 3 })]
+    [InlineData("%", null, new long[0])]
+    [InlineData("_gent", null, new long[0])]
+    [InlineData(null, "%", new long[0])]
+    public async Task AKeyOrCorpusIsMatchedAsPartOfTheNameIgnoringCaseAndLiterally(string? key, string? corpus, long[] ids)
+    {
+        var page = await PageAsync(key: key, corpus: corpus);
+
+        page.Items.Select(i => i.Id).ShouldBe(ids);
+        page.Matching.ShouldBe(ids.Length);
+    }
+
+    [Fact]
+    public async Task ABackslashInAKeyOrCorpusNameIsMatchedLiterally()
+    {
+        await using (var db = _harness.NewContext())
+        {
+            Row(db, At.AddMinutes(6), @"back\slash", SearchSurface.Api, @"x\y", hits: 1);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        (await PageAsync(key: @"\")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(key: @"back\")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(corpus: @"x\y")).Items.Select(i => i.Id).ShouldBe([7L]);
+        (await PageAsync(key: @"a\b")).Items.ShouldBeEmpty("the backslash is a character of the name, not an escape for the next one");
+    }
+
+    [Fact]
+    public async Task SpaceAroundACorpusFilterIsIgnored()
+    {
+        (await PageAsync(corpus: "  docs ")).Items.Select(i => i.Id).ShouldBe([6L, 5, 4, 3]);
+    }
+
+    [Theory]
     [InlineData("carrier-pigeon")]
     [InlineData("1,2")]
     [InlineData("3")]

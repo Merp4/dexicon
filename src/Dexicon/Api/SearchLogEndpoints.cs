@@ -20,6 +20,10 @@ public static class SearchLogEndpoints
     public static void MapSearchLogEndpoints(this IEndpointRouteBuilder app) =>
         app.MapGet("/api/searches", ListAsync).Produces<SearchLogPage>().WithTags("Searches");
 
+    /// <summary>A LIKE pattern that matches rows holding the text anywhere, with the characters LIKE treats specially taken literally.</summary>
+    private static string Containing(string text) =>
+        "%" + text.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + "%";
+
     /// <summary>
     /// Newest first, a page at a time. Every filter is applied in the query, so a page is always full of rows that match
     /// and the count says how many do, and the order is the row id, which no two rows share, so a page boundary
@@ -46,8 +50,10 @@ public static class SearchLogEndpoints
         }
 
         var matching = db.SearchLog.AsNoTracking().AsQueryable();
-        if (!string.IsNullOrWhiteSpace(key)) matching = matching.Where(r => r.TokenName == key);
-        if (!string.IsNullOrWhiteSpace(corpus)) matching = matching.Where(r => r.Corpora.Contains(corpus));
+        // Part of the name, ignoring case, for both: a key shows as "bootstrap (pinned)" and a corpus column holds a list. The text
+        // is matched literally, so a % or _ typed into the box is not a wildcard.
+        if (!string.IsNullOrWhiteSpace(key)) matching = matching.Where(r => EF.Functions.Like(r.TokenName, Containing(key.Trim()), "\\"));
+        if (!string.IsNullOrWhiteSpace(corpus)) matching = matching.Where(r => EF.Functions.Like(r.Corpora, Containing(corpus.Trim()), "\\"));
         if (onlySurface is { } only) matching = matching.Where(r => r.Surface == only);
         if (noResults == true) matching = matching.Where(r => r.Hits == 0);
 

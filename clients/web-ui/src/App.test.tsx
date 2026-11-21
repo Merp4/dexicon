@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { ApiError, getToken, setToken, type Health } from './api';
+import { api, ApiError, getToken, setToken, type Health } from './api';
 
 /**
  * Which session a sign-out ends.
@@ -203,5 +203,56 @@ describe('the navigation', () => {
 
     await within(nav()).findByRole('button', { name: 'Access' });
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
+});
+
+describe('before the corpus list has arrived', () => {
+  it('says it is loading, and not that there are no corpora', async () => {
+    health.mockResolvedValue(healthy);
+    vi.mocked(api.listCorpora).mockReturnValueOnce(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText(/No corpora yet/)).not.toBeInTheDocument();
+  });
+
+  it('draws the screen once the list has arrived', async () => {
+    health.mockResolvedValue(healthy);
+    render(<App />);
+
+    expect(await screen.findByText(/No corpora yet/)).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('draws the screen when the list could not be read, with the error', async () => {
+    health.mockResolvedValue(healthy);
+    vi.mocked(api.listCorpora).mockRejectedValueOnce(new Error('refused'));
+    render(<App />);
+
+    expect(await screen.findByText(/refused/)).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+});
+
+describe('which screens wait for the corpus list', () => {
+  it.each(['#/search', '#/corpora', '#/corpora/books', '#/documents', '#/jobs', '#/searches'])('%s waits for it', async (hash) => {
+    health.mockResolvedValue(healthy);
+    window.location.hash = hash;
+    vi.mocked(api.listCorpora).mockReturnValueOnce(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    // Nothing but the line: no screen, no tabs, whichever screen the address names.
+    expect(screen.getByRole('main').textContent?.trim()).toBe('Loading…');
+  });
+
+  it.each(['#/settings', '#/models'])('%s does not', async (hash) => {
+    health.mockResolvedValue(healthy);
+    window.location.hash = hash;
+    vi.mocked(api.listCorpora).mockReturnValue(new Promise(() => {}));
+    render(<App />);
+
+    expect(await screen.findByRole('tablist', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
   });
 });

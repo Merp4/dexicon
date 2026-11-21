@@ -176,6 +176,8 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
   const [view, setView] = useState<View>(initial.view);
   const [health, setHealth] = useState<Health | null>(null);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
+  // False until the first answer or failure, so a screen is not drawn from an empty list that only means "not loaded yet".
+  const [corporaLoaded, setCorporaLoaded] = useState(false);
   const [live, setLive] = useState<Record<string, Progress>>({});
   const [connected, setConnected] = useState(true);
   const [healthStale, setHealthStale] = useState(false);
@@ -207,6 +209,8 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
       setCorpora(await api.listCorpora());
     } catch (e) {
       setError(e);
+    } finally {
+      setCorporaLoaded(true);
     }
   }, []);
 
@@ -278,6 +282,10 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
       ),
     [refreshCorpora],
   );
+
+  // The screens that read the corpus list wait for it. Approvals, Access (which loads its own), Settings and Models do not.
+  const needsCorpora = view === 'search' || view === 'corpora' || view === 'documents' || view === 'jobs' || view === 'searches';
+  const ready = corporaLoaded || !needsCorpora;
 
   // Present for an administrator and absent for a key, which cannot decide anything.
   const waiting = health?.pendingProposals ?? 0;
@@ -354,17 +362,20 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           </div>
         )}
 
-        {view === 'search' && <SearchView corpora={corpora} onError={setError} />}
-        {view === 'corpora' && !selected && (
+        {!ready && (
+          <p className="m-0 flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Loading…</p>
+        )}
+        {ready && view === 'search' && <SearchView corpora={corpora} onError={setError} />}
+        {ready && view === 'corpora' && !selected && (
           <CorporaView corpora={corpora} live={live} onRefresh={refreshCorpora} onOpen={setSelected} />
         )}
-        {view === 'corpora' && selected && (
+        {ready && view === 'corpora' && selected && (
           <CorpusDetail name={selected} live={live} onBack={() => setSelected(null)} onRefresh={refreshCorpora} onError={setError} />
         )}
-        {view === 'documents' && (
+        {ready && view === 'documents' && (
           <DocumentsView corpora={corpora} onError={setError} onRefresh={refreshCorpora} />
         )}
-        {(view === 'jobs' || view === 'searches') && (
+        {ready && (view === 'jobs' || view === 'searches') && (
           <Tabs
             label="Activity"
             value={view}
@@ -372,8 +383,8 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
             tabs={[{ value: 'jobs', label: 'Jobs' }, { value: 'searches', label: 'Search history' }]}
           />
         )}
-        {view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
-        {view === 'searches' && <SearchesView onError={setError} />}
+        {ready && view === 'jobs' && <JobsView corpora={corpora} live={live} onError={setError} />}
+        {ready && view === 'searches' && <SearchesView onError={setError} />}
         {view === 'approvals' && (
           <ApprovalsView
             onError={setError}
@@ -2351,7 +2362,7 @@ function groupRuns(jobs: Job[]): ({ kind: 'job'; job: Job } | { kind: 'quiet'; j
 }
 
 export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: Record<string, Progress>; onError: (e: unknown) => void }) {
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<Job[] | null>(null);
   const names = useMemo(() => Object.fromEntries(corpora.map((c) => [c.id, c.name])), [corpora]);
   // The job's own corpus, so its caption counts what that corpus counts.
   const sourcesOf = useMemo(
@@ -2372,7 +2383,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
   // or finishing, and `live` notices the start first: a job appearing there flips this
   // and the effect re-arms at the fast interval on the same tick.
   const busy =
-    jobs.some((j) => j.state === 'running' || j.state === 'queued')
+    (jobs ?? []).some((j) => j.state === 'running' || j.state === 'queued')
     || Object.values(live).some(isRunning);
 
   useEffect(() => {
@@ -2385,7 +2396,12 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 
     const load = () => api.listJobs(routine ? 200 : 30, routine ? undefined : true)
       .then((next) => { if (!cancelled) setJobs(next); })
-      .catch((e) => { if (!cancelled) onError(e); });
+      .catch((e) => {
+        if (cancelled) return;
+        // A failed first load ends the wait, with the error above; a later one leaves the list that is there.
+        setJobs((current) => current ?? []);
+        onError(e);
+      });
 
     void load();
     const id = setInterval(load, busy ? 4000 : 30000);
@@ -2412,6 +2428,15 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
       </label>
     </div>
   );
+
+  if (jobs === null) {
+    return (
+      <div className="grid gap-4">
+        {heading}
+        <p className="m-0 flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Loading…</p>
+      </div>
+    );
+  }
 
   if (jobs.length === 0) {
     return (
@@ -2516,6 +2541,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 export function AccessView({ onError }: { onError: (e: unknown) => void }) {
   const [tokens, setTokens] = useState<Awaited<ReturnType<typeof api.listTokens>>>([]);
   const [corpora, setCorpora] = useState<Corpus[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
   const [mapping, setMapping] = useState<TokenSummary | null>(null);
   const [scoping, setScoping] = useState<TokenSummary | null>(null);
@@ -2524,10 +2550,17 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
 
   const load = useCallback(async () => {
     try {
-      setTokens(await api.listTokens());
-      // Needed to render a mapping as names rather than ids, and to offer the ticks.
-      setCorpora(await api.listCorpora());
-    } catch (e) { onError(e); }
+      // Needed to render a mapping as names rather than ids, and to offer the ticks. Set together, so a key is not
+      // drawn with an id where its corpus's name is about to arrive.
+      const [keys, all] = await Promise.all([api.listTokens(), api.listCorpora()]);
+      setTokens(keys);
+      setCorpora(all);
+    } catch (e) {
+      onError(e);
+    } finally {
+      // A failed first load ends the wait too, with the error above and the list it could not fill left empty.
+      setLoaded(true);
+    }
   }, [onError]);
 
   const nameOf = useCallback(
@@ -2547,7 +2580,9 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
           <Button variant="primary" onClick={() => setCreating(true)}><Plus />New key</Button>
         </div>
 
-        {tokens.length === 0 ? (
+        {!loaded ? (
+          <p className="m-0 flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Loading…</p>
+        ) : tokens.length === 0 ? (
           <Empty title="No keys" hint="A key is how an agent authenticates. Create one per agent, then choose what it can reach." />
         ) : (
           <div className="card">

@@ -65,6 +65,9 @@ export function ConfigUpload() {
   }
 
   const checked = result !== null && !result.applied;
+  const indexed = (result?.items ?? []).map((item, at) => ({ item, at }));
+  const changes = indexed.filter(({ item }) => item.outcome !== 'unchanged');
+  const unchanged = indexed.filter(({ item }) => item.outcome === 'unchanged');
   const queues = result?.items.filter((i) => i.outcome === 'create' || i.outcome === 'update').length ?? 0;
 
   return (
@@ -104,11 +107,23 @@ export function ConfigUpload() {
           <Notice tone={result.applied ? 'ok' : 'neutral'}>
             {result.applied ? 'Applied' : 'Checked, nothing changed'}: {summary(result.counts)}.
           </Notice>
+          {/* What changes or went wrong comes first. An instance of a hundred sources would otherwise bury two changes
+              under the rows that say nothing. */}
           <ul aria-label="What the file does" className="m-0 grid list-none gap-1.5 p-0 text-sm">
-            {result.items.map((item, i) => (
-              <ItemRow key={`${i}-${item.kind}-${item.name}`} item={item} />
+            {changes.map(({ item, at }) => (
+              <ItemRow key={`${at}-${item.kind}-${item.name}`} item={item} />
             ))}
           </ul>
+          {unchanged.length > 0 && (
+            <details className="text-sm">
+              <summary className="cursor-pointer text-muted-foreground">{unchanged.length} unchanged</summary>
+              <ul aria-label="Unchanged" className="m-0 mt-2 grid list-none gap-1.5 p-0">
+                {unchanged.map(({ item, at }) => (
+                  <ItemRow key={`${at}-${item.kind}-${item.name}`} item={item} />
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 
