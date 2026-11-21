@@ -22,6 +22,9 @@ vi.mock('./api', async (importOriginal) => ({
     signOut: (...a: unknown[]) => signOut(...a),
     listCorpora: vi.fn().mockResolvedValue([]),
     listJobs: vi.fn().mockResolvedValue([]),
+    // A corpus page that never finishes loading: the test only leaves it.
+    getCorpus: () => new Promise(() => {}),
+    listFiles: () => new Promise(() => {}),
   },
   subscribeToProgress: () => () => {},
 }));
@@ -180,6 +183,17 @@ describe('the navigation', () => {
 
     expect(await screen.findByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
     expect(within(nav()).getByRole('button', { name: section })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('leaves a corpus page for Activity by its chip', async () => {
+    health.mockResolvedValue(healthy);
+    window.location.hash = '#/corpora/books';
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await within(nav()).findByRole('button', { name: 'Activity' }));
+
+    expect(window.location.hash).toBe('#/jobs');
   });
 
   it('shows no tabs on a screen that is not part of a section', async () => {

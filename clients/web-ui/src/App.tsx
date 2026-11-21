@@ -368,7 +368,7 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           <Tabs
             label="Activity"
             value={view}
-            onChange={(v) => { setView(v); setSelected(null); }}
+            onChange={setView}
             tabs={[{ value: 'jobs', label: 'Jobs' }, { value: 'searches', label: 'Search history' }]}
           />
         )}
@@ -385,7 +385,7 @@ function Shell({ onSignOut }: { onSignOut: (failed?: string | null) => void }) {
           <Tabs
             label="Settings"
             value={view}
-            onChange={(v) => { setView(v); setSelected(null); }}
+            onChange={setView}
             tabs={[{ value: 'settings', label: 'General' }, { value: 'models', label: 'Models' }]}
           />
         )}

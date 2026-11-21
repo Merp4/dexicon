@@ -192,8 +192,9 @@ export function Segmented<T extends string>({
 
 /**
  * Tabs for the screens of one section, such as Jobs and Search history under Activity. Each tab is a screen with its own
- * address, so the caller holds the selection (the URL) and this only shows it. One tab stop, and the arrow keys move
- * between tabs, as in Segmented.
+ * address, so the caller holds the selection (the URL) and this only shows it. One tab stop; Left and Right move between
+ * tabs and wrap, Home and End go to the first and last. There is no tab panel to point at, so a tab does not set
+ * `aria-controls`.
  */
 export function Tabs<T extends string>({
   value,
@@ -209,8 +210,7 @@ export function Tabs<T extends string>({
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  function move(from: number, delta: number) {
-    const next = (from + delta + tabs.length) % tabs.length;
+  function go(next: number) {
     onChange(tabs[next].value);
     refs.current[next]?.focus();
   }
@@ -231,13 +231,15 @@ export function Tabs<T extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.value)}
             onKeyDown={(e) => {
-              if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                move(i, 1);
-              } else if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                move(i, -1);
-              }
+              const target =
+                e.key === 'ArrowRight' ? (i + 1) % tabs.length
+                : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length
+                : e.key === 'Home' ? 0
+                : e.key === 'End' ? tabs.length - 1
+                : null;
+              if (target === null) return;
+              e.preventDefault();
+              go(target);
             }}
             className={cn(
               '-mb-px border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap outline-none',

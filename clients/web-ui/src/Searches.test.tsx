@@ -127,8 +127,10 @@ describe('the searches screen', () => {
 
     render(<SearchesView onError={vi.fn()} />);
 
-    expect(await screen.findAllByText(/The search log is switched off/)).toHaveLength(2);
+    const notice = (await screen.findByText(/DEXICON__SEARCHLOG__ENABLED/)).closest('[role="status"]') as HTMLElement;
+    expect(notice).toHaveTextContent('The search log is switched off (DEXICON__SEARCHLOG__ENABLED), so new searches are not recorded.');
     expect(screen.getByText('No searches recorded')).toBeInTheDocument();
+    expect(screen.getByText('The search log is switched off.')).toBeInTheDocument();
   });
 
   it('reports searches the log could not keep', async () => {
