@@ -118,6 +118,7 @@ const noop = { onRefresh: async () => {}, onError: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   listDocuments.mockResolvedValue([doc]);
 });
 
@@ -140,29 +141,58 @@ describe('the document library', () => {
     expect(within(card).getByText(/from 256 tokens \/ 40 overlap, blank-line/)).toBeInTheDocument();
   });
 
-  it('will not upload until a destination is chosen', async () => {
-    // Upload goes into ONE corpus. A button that is live before the target is picked is
-    // an invitation to put a file somewhere at random.
-    render(<DocumentsView corpora={[]} {...noop} />);
+  it('takes dropped files before a corpus is chosen, and will not upload until one is', async () => {
+    // Upload goes into ONE corpus. A button that is live before the target is picked is an invitation to put a
+    // file somewhere at random, but a drop is not refused for the lack of one: the files wait in a list.
+    const user = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={[corpus('library'), corpus('fine')]} {...noop} />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
 
-    expect(await screen.findByRole('button', { name: /choose files/i })).toBeDisabled();
+    await user.upload(input, new File(['x'], 'notes.txt'));
+
+    expect(await screen.findByText('1 file to upload')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add to')).toHaveTextContent(/choose a corpus/i);
+    expect(screen.getByRole('button', { name: 'Upload 1 file' })).toBeDisabled();
+    expect(uploadDocuments).not.toHaveBeenCalled();
+
+    await user.click(screen.getByLabelText('Add to'));
+    await user.click(await screen.findByRole('option', { name: 'fine' }));
+
+    expect(screen.getByRole('button', { name: 'Upload 1 file' })).toBeEnabled();
   });
 
-  it('gives the chunk settings in the upload picker their units', async () => {
+  it('says how the files will be chunked in the corpus chosen, with the units', async () => {
     // It read "books — 1843/258": two numbers and no way to know what they measure.
     const user = userEvent.setup();
-    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+    const { container } = render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
 
-    await user.click(await screen.findByLabelText(/upload into/i));
-    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    await user.upload(input, new File(['x'], 'notes.txt'));
 
-    expect(options).toEqual(['library · 768 tokens / 100 overlap']);
+    expect(await screen.findByText('Chunked as library:default (768 tokens / 100 overlap).')).toBeInTheDocument();
   });
 
-  it('says there is nowhere to put a file rather than offering an empty picker', async () => {
-    render(<DocumentsView corpora={[]} {...noop} />);
+  it('names every chunk set of the corpus, since a file is chunked for each', async () => {
+    const two = corpus('library');
+    two.chunkSets = [two.chunkSets[0], { ...two.chunkSets[0], id: 'set-2', name: 'fine', chunkSize: 256, chunkOverlap: 40, isDefault: false }];
+    const user = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={[two]} {...noop} />);
 
-    expect(await screen.findByLabelText(/upload into/i)).toHaveTextContent(/no writable corpus/i);
+    await user.upload(container.querySelector('input[type="file"]') as HTMLInputElement, new File(['x'], 'notes.txt'));
+
+    expect(await screen.findByText(
+      'Chunked as library:default (768 tokens / 100 overlap), library:fine (256 tokens / 40 overlap).',
+    )).toBeInTheDocument();
+  });
+
+  it('says there is nowhere to put the files rather than offering an empty picker', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={[]} {...noop} />);
+
+    await user.upload(container.querySelector('input[type="file"]') as HTMLInputElement, new File(['x'], 'notes.txt'));
+
+    expect(await screen.findByLabelText('Add to')).toHaveTextContent(/no corpus yet/i);
+    expect(screen.getByRole('button', { name: 'Upload 1 file' })).toBeDisabled();
   });
 
   it('does not offer to attach a document to a corpus that already has it', async () => {
@@ -236,7 +266,13 @@ describe('uploading a batch', () => {
     const user = userEvent.setup();
     const { container } = render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /choose files/i })).toBeEnabled());
-    return { user, input: container.querySelector('input[type="file"]') as HTMLInputElement };
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    // The files are added to the list, then sent by the button.
+    const addAndUpload = async (files: File | File[]) => {
+      await user.upload(input, files);
+      await user.click(await screen.findByRole('button', { name: /^Upload \d+ files?$/ }));
+    };
+    return { user, input, addAndUpload };
   }
 
   /**
@@ -254,9 +290,9 @@ describe('uploading a batch', () => {
       ],
       job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, [new File(['x'], 'notes.txt'), new File(['x'], 'huge.iso')]);
+    await addAndUpload([new File(['x'], 'notes.txt'), new File(['x'], 'huge.iso')]);
 
     expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
     // Two entries came back, one of them the request as a whole: one file was refused.
@@ -277,9 +313,9 @@ describe('uploading a batch', () => {
       failed: [{ file: '(request)', error: "'(request)' is empty." }],
       job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, [new File(['x'], 'notes.txt'), new File([''], '(request)')]);
+    await addAndUpload([new File(['x'], 'notes.txt'), new File([''], '(request)')]);
 
     expect(await screen.findByText('1 file not stored:')).toBeInTheDocument();
     expect(screen.getByText("(request): '(request)' is empty.")).toBeInTheDocument();
@@ -292,9 +328,9 @@ describe('uploading a batch', () => {
       failed: [{ file: null, error: 'The request is over the 2.0 GB bound.' }],
       job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, new File(['x'], 'notes.txt'));
+    await addAndUpload(new File(['x'], 'notes.txt'));
 
     expect(await screen.findByText('The request is over the 2.0 GB bound.')).toBeInTheDocument();
     expect(screen.queryByText(/files? not stored/)).not.toBeInTheDocument();
@@ -313,9 +349,9 @@ describe('uploading a batch', () => {
       ],
       job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+    await addAndUpload([new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
 
     expect(await screen.findByText('2 files stored.')).toBeInTheDocument();
     expect(screen.getByText('1 file not stored:')).toBeInTheDocument();
@@ -336,9 +372,9 @@ describe('uploading a batch', () => {
       ],
       job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+    await addAndUpload([new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
 
     expect(await screen.findByText('2 files stored.')).toBeInTheDocument();
     expect(screen.getByText('2 files not stored:')).toBeInTheDocument();
@@ -348,30 +384,35 @@ describe('uploading a batch', () => {
   });
 
   it('ignores a drop made while an upload is still running', async () => {
-    // A second sequence of requests would overwrite the first one's result on screen.
+    // A second sequence of requests would overwrite the first one's result on screen, and files added now would be
+    // cleared with the first batch.
     let finish: (v: unknown) => void = () => {};
     uploadDocuments.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
-    const { input } = await renderReady();
+    const { user, input } = await renderReady();
     const zone = screen.getByText('Drop files here').parentElement as HTMLElement;
 
     fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'a.txt')] } });
+    await user.click(await screen.findByRole('button', { name: 'Upload 1 file' }));
     await screen.findByText(/Uploading/);
     fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'b.txt')] } });
     fireEvent.change(input, { target: { files: [new File(['x'], 'c.txt')] } });
 
+    // The list is still the one being sent.
+    expect(screen.getByText('1 file to upload')).toBeInTheDocument();
     expect(uploadDocuments).toHaveBeenCalledTimes(1);
     finish({ corpus: 'library', stored: [stored('a.txt')], failed: [], job: {} });
     expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
     expect(uploadDocuments).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('region', { name: 'Files to upload' })).not.toBeInTheDocument();
   });
 
   it('says nothing about refused files when none were refused', async () => {
     uploadDocuments.mockResolvedValue({
       corpus: 'library', stored: [stored('notes.txt')], failed: [], job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, new File(['x'], 'notes.txt'));
+    await addAndUpload(new File(['x'], 'notes.txt'));
 
     expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
     expect(screen.queryByText(/not stored/)).not.toBeInTheDocument();
@@ -384,13 +425,155 @@ describe('uploading a batch', () => {
     uploadDocuments.mockResolvedValueOnce({
       corpus: 'library', stored: [stored('c.txt')], failed: [], job: {},
     });
-    const { user, input } = await renderReady();
+    const { addAndUpload } = await renderReady();
 
-    await user.upload(input, new File(['x'], 'a.txt'));
+    await addAndUpload(new File(['x'], 'a.txt'));
     expect(await screen.findByText('1 file not stored:')).toBeInTheDocument();
-    await user.upload(input, new File(['x'], 'c.txt'));
+    await addAndUpload(new File(['x'], 'c.txt'));
 
     await waitFor(() => expect(screen.queryByText(/not stored/)).not.toBeInTheDocument());
+  });
+});
+
+describe('the list of files to upload', () => {
+  const user = () => userEvent.setup();
+
+  async function staged() {
+    const u = user();
+    const { container } = render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /choose files/i })).toBeEnabled());
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    return { u, input };
+  }
+
+  it('uploads nothing when files are added, and shows each with its size', async () => {
+    const { u, input } = await staged();
+
+    await u.upload(input, [new File(['x'.repeat(2048)], 'notes.txt'), new File(['y'], 'more.md')]);
+
+    const list = await screen.findByRole('region', { name: 'Files to upload' });
+    expect(within(list).getByText('2 files to upload')).toBeInTheDocument();
+    expect(within(list).getByText('notes.txt')).toBeInTheDocument();
+    expect(within(list).getByText('2.0 KB')).toBeInTheDocument();
+    expect(uploadDocuments).not.toHaveBeenCalled();
+  });
+
+  it('takes a drop into the list without sending it', async () => {
+    await staged();
+    const zone = screen.getByText('Drop files here').parentElement as HTMLElement;
+
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'a.txt')] } });
+
+    expect(await screen.findByText('1 file to upload')).toBeInTheDocument();
+    expect(uploadDocuments).not.toHaveBeenCalled();
+  });
+
+  it('adds to the list on a second drop, and does not add the same file twice', async () => {
+    const { u, input } = await staged();
+    const same = new File(['x'], 'notes.txt', { lastModified: 1000 });
+
+    await u.upload(input, same);
+    await u.upload(input, new File(['x'], 'notes.txt', { lastModified: 1000 }));
+    await u.upload(input, new File(['x'], 'other.txt', { lastModified: 1000 }));
+
+    expect(await screen.findByText('2 files to upload')).toBeInTheDocument();
+  });
+
+  it('removes one file, or all of them', async () => {
+    const { u, input } = await staged();
+    await u.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+
+    await u.click(await screen.findByRole('button', { name: 'Remove a.txt' }));
+    expect(screen.getByText('1 file to upload')).toBeInTheDocument();
+    expect(screen.queryByText('a.txt')).not.toBeInTheDocument();
+
+    await u.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByRole('region', { name: 'Files to upload' })).not.toBeInTheDocument();
+    expect(uploadDocuments).not.toHaveBeenCalled();
+  });
+
+  it('sends the files in the list, in order, to the corpus chosen, and empties the list', async () => {
+    uploadDocuments.mockResolvedValue({ corpus: 'library', stored: [{ fileName: 'a.txt', deduplicated: false }, { fileName: 'b.txt', deduplicated: false }], failed: [], job: {} });
+    const { u, input } = await staged();
+    await u.upload(input, [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')]);
+
+    await u.click(await screen.findByRole('button', { name: 'Upload 2 files' }));
+
+    expect(await screen.findByText('2 files stored.')).toBeInTheDocument();
+    expect(uploadDocuments).toHaveBeenCalledTimes(1);
+    expect(uploadDocuments.mock.calls[0][0]).toBe('library');
+    expect((uploadDocuments.mock.calls[0][1] as File[]).map((f) => f.name)).toEqual(['a.txt', 'b.txt']);
+    expect(screen.queryByRole('region', { name: 'Files to upload' })).not.toBeInTheDocument();
+  });
+
+  it('is not shown, and the choice of corpus with it, until there are files', async () => {
+    await staged();
+
+    expect(screen.queryByRole('region', { name: 'Files to upload' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Add to')).not.toBeInTheDocument();
+  });
+});
+
+describe('which corpus the files go into', () => {
+  async function stage(corpora: Corpus[]) {
+    const u = userEvent.setup();
+    const { container } = render(<DocumentsView corpora={corpora} {...noop} />);
+    await u.upload(container.querySelector('input[type="file"]') as HTMLInputElement, new File(['x'], 'notes.txt'));
+    return { u, add: await screen.findByLabelText('Add to') };
+  }
+
+  it('is the only corpus there is', async () => {
+    const { add } = await stage([corpus('library')]);
+
+    expect(add).toHaveTextContent('library');
+  });
+
+  it('is none of several until one is chosen', async () => {
+    const { add } = await stage([corpus('library'), corpus('fine')]);
+
+    expect(add).toHaveTextContent(/choose a corpus/i);
+  });
+
+  it('is the one last uploaded into, when it is still there', async () => {
+    localStorage.setItem('dexicon.uploadTarget', 'fine');
+
+    const { add } = await stage([corpus('library'), corpus('fine')]);
+
+    expect(add).toHaveTextContent('fine');
+  });
+
+  it('is not a remembered corpus that has gone', async () => {
+    localStorage.setItem('dexicon.uploadTarget', 'gone');
+
+    const { add } = await stage([corpus('library'), corpus('fine')]);
+
+    expect(add).toHaveTextContent(/choose a corpus/i);
+  });
+
+  it('is cleared when the corpus chosen is no longer there', async () => {
+    const u = userEvent.setup();
+    const { container, rerender } = render(<DocumentsView corpora={[corpus('library'), corpus('fine'), corpus('third')]} {...noop} />);
+    await u.upload(container.querySelector('input[type="file"]') as HTMLInputElement, new File(['x'], 'notes.txt'));
+    await u.click(await screen.findByLabelText('Add to'));
+    await u.click(await screen.findByRole('option', { name: 'fine' }));
+    expect(screen.getByRole('button', { name: 'Upload 1 file' })).toBeEnabled();
+
+    rerender(<DocumentsView corpora={[corpus('library'), corpus('third')]} {...noop} />);
+
+    expect(await screen.findByLabelText('Add to')).toHaveTextContent(/choose a corpus/i);
+    expect(screen.getByRole('button', { name: 'Upload 1 file' })).toBeDisabled();
+  });
+
+  it('is remembered once files have been uploaded into it', async () => {
+    uploadDocuments.mockResolvedValue({ corpus: 'fine', stored: [{ fileName: 'notes.txt', deduplicated: false }], failed: [], job: {} });
+    const { u } = await stage([corpus('library'), corpus('fine')]);
+
+    await u.click(screen.getByLabelText('Add to'));
+    await u.click(await screen.findByRole('option', { name: 'fine' }));
+    await u.click(screen.getByRole('button', { name: 'Upload 1 file' }));
+
+    expect(await screen.findByText('1 file stored.')).toBeInTheDocument();
+    expect(localStorage.getItem('dexicon.uploadTarget')).toBe('fine');
   });
 });
 

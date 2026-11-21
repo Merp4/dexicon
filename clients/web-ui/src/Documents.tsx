@@ -12,8 +12,32 @@ import { count } from './lib/units';
 /** How often the list is read again while an attachment is still pending. */
 const PENDING_REFRESH_MS = 3000;
 
+const TARGET_KEY = 'dexicon.uploadTarget';
+
+// The corpus last uploaded into, in this browser. A convenience: without it, a corpus is chosen again each time.
+function rememberedTarget(): string | null {
+  try {
+    return localStorage.getItem(TARGET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberTarget(name: string) {
+  try {
+    localStorage.setItem(TARGET_KEY, name);
+  } catch {
+    // Storage may be blocked; the choice is then not remembered.
+  }
+}
+
+const sameFile = (a: File, b: File) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+
 /**
  * The document library.
+ *
+ * Files are staged first: a drop or a choice adds them to a list, and the corpus they go into is chosen beside that list, so
+ * the drop is never refused for lack of a target and nothing is uploaded until Upload is pressed.
  *
  * The thing this screen has to make obvious, because it is the whole point of the
  * design: a document is stored and extracted ONCE, and each corpus holds its own
@@ -33,6 +57,7 @@ export function DocumentsView({
   const [docs, setDocs] = useState<LibraryDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadTo, setUploadTo] = useState<string>('');
+  const [staged, setStaged] = useState<File[]>([]);
   const [attaching, setAttaching] = useState<LibraryDocument | null>(null);
   const [inspecting, setInspecting] = useState<LibraryDocument | null>(null);
   const [detaching, setDetaching] = useState<{ document: LibraryDocument; attachment: LibraryAttachment } | null>(null);
@@ -51,6 +76,8 @@ export function DocumentsView({
 
   // Everything the signed-in admin can see is writable; there is no owner to test.
   const writable = corpora;
+  const targetName = writable.find((c) => c.name === uploadTo)?.name;
+  const targetSets = writable.find((c) => c.name === uploadTo)?.chunkSets;
 
   const load = useCallback(async () => {
     try {
@@ -89,17 +116,33 @@ export function DocumentsView({
     return () => clearInterval(timer);
   }, [anyPending]);
 
+  // The corpus is the one last uploaded into, or the only one there is. Otherwise it is left for the person to choose, and a
+  // corpus that has gone is dropped.
   useEffect(() => {
-    if (!uploadTo && writable.length > 0) setUploadTo(writable[0].name);
+    if (uploadTo && !writable.some((c) => c.name === uploadTo)) {
+      setUploadTo('');
+      return;
+    }
+    if (uploadTo) return;
+    const remembered = rememberedTarget();
+    const pick = writable.find((c) => c.name === remembered) ?? (writable.length === 1 ? writable[0] : undefined);
+    if (pick) setUploadTo(pick.name);
   }, [writable, uploadTo]);
 
+  // Adds files to the list. A file already in it (same name, size and date) is not added twice.
+  const stage = useCallback((files: File[]) => {
+    if (uploading.current) return;
+    setStaged((current) => [...current, ...files.filter((f) => !current.some((c) => sameFile(c, f)))]);
+  }, []);
+
   const upload = useCallback(
-    async (files: File[]) => {
+    async () => {
+      const files = staged;
       if (files.length === 0) return;
       // A second sequence of requests would overwrite the first one's result on screen.
       if (uploading.current) return;
       if (!uploadTo) {
-        onError(new Error('Choose a corpus to upload into first.'));
+        onError(new Error('Choose a corpus to add the files to first.'));
         return;
       }
       uploading.current = true;
@@ -108,6 +151,9 @@ export function DocumentsView({
       setNotStored([]);
       try {
         const result = await api.uploadDocuments(uploadTo, files);
+        rememberTarget(uploadTo);
+        // The files are with the server now. Those it refused are named below, and are added again from there.
+        setStaged([]);
         // A batch is accepted when any file is stored. The files the server refused (over the
         // size cap, empty, a name with a control character or over 260 characters, a rename onto
         // another document's name, or an extraction that timed out or failed on the server) come
@@ -132,32 +178,13 @@ export function DocumentsView({
         setBusy(false);
       }
     },
-    [uploadTo, load, onRefresh, onError],
+    [staged, uploadTo, load, onRefresh, onError],
   );
 
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="m-0 text-lg">Documents</h1>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground" htmlFor="upload-target">Upload into</label>
-          <Select
-            id="upload-target"
-            className="w-auto"
-            value={uploadTo}
-            onValueChange={setUploadTo}
-            disabled={writable.length === 0}
-            placeholder={writable.length === 0 ? 'No writable corpus' : 'Choose a corpus'}
-          >
-            {writable.map((c) => (
-              <SelectItem key={c.id} value={c.name}>
-                {c.name} · {c.chunkSets.length === 1
-                  ? `${c.chunkSets[0].chunkSize} tokens / ${c.chunkSets[0].chunkOverlap} overlap`
-                  : `${c.chunkSets.length} chunk sets`}
-              </SelectItem>
-            ))}
-          </Select>
-        </div>
       </div>
 
       {/* Drop zone */}
@@ -172,7 +199,7 @@ export function DocumentsView({
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          void upload(Array.from(e.dataTransfer.files));
+          stage(Array.from(e.dataTransfer.files));
         }}
         // A dashed border and a colour change are the whole affordance: nothing else on
         // the page says "you may drop a file here".
@@ -187,7 +214,7 @@ export function DocumentsView({
           multiple
           hidden
           onChange={(e) => {
-            void upload(Array.from(e.target.files ?? []));
+            stage(Array.from(e.target.files ?? []));
             e.target.value = '';
           }}
         />
@@ -198,10 +225,62 @@ export function DocumentsView({
           PDF, DOCX, PPTX, EPUB, HTML, Markdown and plain text. Extraction happens once per
           file; chunking happens per corpus.
         </p>
-        <Button onClick={() => fileInput.current?.click()} disabled={busy || !uploadTo}>
+        <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           Choose files
         </Button>
       </div>
+
+      {staged.length > 0 && (
+        <section aria-label="Files to upload" className="card grid gap-3 p-3.5">
+          <h2 className="m-0 text-base">{count(staged.length, 'file')} to upload</h2>
+          <ul className="m-0 grid list-none gap-1 p-0 text-sm">
+            {staged.map((f, i) => (
+              <li key={`${f.name}-${f.size}-${i}`} className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-1.5">
+                <span className="[overflow-wrap:anywhere]">{f.name}</span>
+                <span className="text-xs text-muted-foreground">{formatBytes(f.size)}</span>
+                <span className="flex-1" />
+                <Button
+                  size="xs"
+                  disabled={busy}
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => setStaged((current) => current.filter((c) => c !== f))}
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-sm" htmlFor="upload-target">Add to</label>
+            <Select
+              id="upload-target"
+              className="w-auto"
+              value={uploadTo}
+              onValueChange={setUploadTo}
+              disabled={writable.length === 0 || busy}
+              placeholder={writable.length === 0 ? 'No corpus yet' : 'Choose a corpus'}
+            >
+              {writable.map((c) => (
+                <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+              ))}
+            </Select>
+          </div>
+          {targetSets && (
+            <p className="m-0 text-xs text-muted-foreground">
+              Chunked as {targetSets.map((t) => `${targetName}:${t.name} (${t.chunkSize} tokens / ${t.chunkOverlap} overlap)`).join(', ')}.
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button disabled={busy} onClick={() => setStaged([])}>Clear</Button>
+            <Button variant="primary" disabled={busy || !uploadTo} onClick={() => void upload()}>
+              {busy ? <Spinner /> : null}
+              Upload {count(staged.length, 'file')}
+            </Button>
+          </div>
+        </section>
+      )}
 
       {lastUpload && (
         <Notice tone="ok">
@@ -234,7 +313,7 @@ export function DocumentsView({
       ) : docs.length === 0 ? (
         <Empty
           title="No documents yet"
-          hint="Upload a PDF or a doc above. The same file can then be attached to several corpora, each chunked its own way."
+          hint="Add a PDF or a doc above. The same file can then be attached to several corpora, each chunked its own way."
         />
       ) : (
         <div className="grid gap-3">

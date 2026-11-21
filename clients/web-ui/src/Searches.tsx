@@ -116,7 +116,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
         <div>
           <h1 className="m-0 text-lg font-semibold">Search history</h1>
           <p className="m-0 mt-1 max-w-[70ch] text-sm text-muted-foreground">
-            Searches that have run, newest first. Choose Found nothing to see what agents asked that returned no hits.
+            Searches that have run, newest first. No results lists the ones that returned nothing.
           </p>
         </div>
         <Button onClick={() => setReload((n) => n + 1)}>
@@ -148,7 +148,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
           onChange={setWhich}
           options={[
             { value: 'all', label: 'All' },
-            { value: 'nothing', label: 'Found nothing' },
+            { value: 'nothing', label: 'No results' },
           ]}
         />
         <div className="w-40">

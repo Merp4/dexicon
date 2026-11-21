@@ -149,7 +149,7 @@ describe('the searches screen', () => {
     render(<SearchesView onError={vi.fn()} />);
     await screen.findByRole('table');
 
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
 
     await vi.waitFor(() => expect(listSearches).toHaveBeenLastCalledWith(expect.objectContaining({ noResults: true })));
   });
@@ -209,7 +209,7 @@ describe('the searches screen, branch by branch', () => {
     render(<SearchesView onError={vi.fn()} />);
     await screen.findByRole('table');
 
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
     await user.click(screen.getByRole('radio', { name: 'All' }));
 
     await vi.waitFor(() => expect(listSearches.mock.lastCall?.[0]).not.toHaveProperty('noResults'));
@@ -245,7 +245,7 @@ describe('the searches screen, branch by branch', () => {
     render(<SearchesView onError={vi.fn()} />);
     await screen.findByRole('table');
 
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
 
     expect(await screen.findByText('No searches match')).toBeInTheDocument();
     expect(screen.queryByText('No searches recorded')).not.toBeInTheDocument();
@@ -294,7 +294,7 @@ describe('the searches screen, branch by branch', () => {
     expect(screen.getByText('the newest one')).toBeInTheDocument();
 
     listSearches.mockResolvedValue(page([item({ id: 950, query: 'a filtered one', queryChars: 14 })]));
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
 
     expect(await screen.findByText('a filtered one')).toBeInTheDocument();
     expect(screen.queryByText('an older one')).not.toBeInTheDocument();
@@ -309,7 +309,7 @@ describe('the searches screen, branch by branch', () => {
     render(<SearchesView onError={vi.fn()} />);
     await screen.findByRole('table');
 
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
     await user.click(await screen.findByRole('button', { name: 'Older searches' }));
 
     await vi.waitFor(() => expect(listSearches).toHaveBeenLastCalledWith(expect.objectContaining({ noResults: true, before: 7 })));
@@ -324,7 +324,7 @@ describe('the searches screen, branch by branch', () => {
     render(<SearchesView onError={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Older searches' }));
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
     expect(await screen.findByText('under the new filter')).toBeInTheDocument();
     await act(async () => { releaseOlder(page([item({ id: 12, query: 'under the old filter', queryChars: 19 })])); });
 
@@ -361,7 +361,7 @@ describe('the searches screen, branch by branch', () => {
     const user = userEvent.setup();
     render(<SearchesView onError={vi.fn()} />);
 
-    await user.click(screen.getByRole('radio', { name: 'Found nothing' }));
+    await user.click(screen.getByRole('radio', { name: 'No results' }));
     expect(await screen.findByText('the filtered answer')).toBeInTheDocument();
     await act(async () => { releaseFirst(page([item({ query: 'the stale answer', queryChars: 16 })])); });
 
@@ -386,7 +386,7 @@ describe('the count line under a filter', () => {
 
     render(<SearchesView onError={vi.fn()} />);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('radio', { name: 'Found nothing' }));
+    await user.click(await screen.findByRole('radio', { name: 'No results' }));
 
     expect(await screen.findByText(new RegExp(`^${said}`))).toBeInTheDocument();
   });
