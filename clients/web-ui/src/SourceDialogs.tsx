@@ -727,7 +727,7 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
 
         {dropsKept && (
           <Notice tone="warn" className="text-xs">
-            Without keeping, the limit is a window: commits past the newest{' '}
+            With <strong>Keep commits once indexed</strong> unticked, commits past the newest{' '}
             {git.maxCommits?.toLocaleString()} leave the index on the refresh.
           </Notice>
         )}

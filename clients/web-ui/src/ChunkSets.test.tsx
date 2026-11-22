@@ -797,7 +797,7 @@ describe('saving a framing', () => {
       provider: 'ollama',
       model: 'nomic-embed-text:latest',
       reindexing: ['docs:default', 'books:default'],
-      note: '2 chunk set(s) are re-indexing: framing changes the vectors.',
+      note: '2 chunk sets are re-indexing, because a change of framing changes their vectors.',
     });
     const { dialog, user } = await openFraming();
 

@@ -21,7 +21,7 @@ import {
 } from './api';
 import {
   Badge, Button, CardButton, Checkbox, Chip, CopyButton, Empty, ErrorBanner, Field, Input, Modal,
-  Notice, Segmented, Select, SelectItem, Spinner, Tabs, formatBytes, localTime, relativeTime, stateTone,
+  Notice, Segmented, Select, SelectItem, Spinner, Tabs, fileStatusLabel, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import {
   Activity, ArrowLeft, Check, Database, FileText, Key, LogOut, Plus, RefreshCw, RotateCcw,
@@ -1612,7 +1612,7 @@ export function CorpusDetail({
               { value: '', label: 'all' },
               { value: 'indexed', label: 'indexed' },
               { value: 'skipped', label: 'skipped' },
-              { value: 'empty', label: 'empty' },
+              { value: 'empty', label: fileStatusLabel('empty') },
               { value: 'failed', label: 'failed' },
             ]}
           />
@@ -1652,10 +1652,12 @@ export function CorpusDetail({
         ) : files.length === 0 && filter && !nameQuery ? (
           // A status tab on its own. That nothing has failed is the news, and "no file
           // matches that, clear the filter" read as a search that had gone wrong.
-          <Empty title={`No ${filter} ${unitFor(corpus.sources, 0)}`} />
+          <Empty title={filter === 'empty' ? `No ${unitFor(corpus.sources, 0)} without text` : `No ${filter} ${unitFor(corpus.sources, 0)}`} />
         ) : files.length === 0 ? (
           <Empty
-            title={`No ${filter ? `${filter} ` : ''}${unitFor(corpus.sources, 1)} matches that`}
+            title={filter === 'empty'
+              ? `No ${unitFor(corpus.sources, 1)} without text matches that`
+              : `No ${filter ? `${filter} ` : ''}${unitFor(corpus.sources, 1)} matches that`}
             hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
@@ -1684,7 +1686,7 @@ export function CorpusDetail({
                 >
                   {f.relativePath}
                 </button>
-                <Badge tone={stateTone(f.status)}>{f.status}</Badge>
+                <Badge tone={stateTone(f.status)}>{fileStatusLabel(f.status)}</Badge>
                 <span className="dim text-xs">{count(f.chunkCount, 'chunk')} · {formatBytes(f.sizeBytes)}</span>
                 {/* This is where "why isn't my PDF searchable" gets answered. */}
                 {f.statusDetail && <span className="dim text-xs w-[100%]">↳ {f.statusDetail}</span>}

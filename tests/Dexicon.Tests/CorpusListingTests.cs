@@ -347,7 +347,7 @@ public class CorpusDiagnosisTests
         problems.ShouldBe("  failed: 1\n    notes/a   skipped: 0 b.md — unreadable\n");
         sources.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2, "the heading and one source");
         sources.ShouldContain("; only **/*.md   failed: 9; not a b");
-        gaps.ShouldContain("in notes y are covered");
+        gaps.ShouldContain("1 file in notes y is in no source");
         gaps.ShouldContain("    c d.md\n");
     }
 }

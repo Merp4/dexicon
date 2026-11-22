@@ -308,7 +308,7 @@ public static class ChunkSetEndpoints
             if (pending > 0)
                 return Results.Problem(
                     title: "Chunk set is not ready",
-                    detail: $"'{set.Name}' still has {pending:N0} file(s) to index. Promoting now would " +
+                    detail: $"'{set.Name}' still has {pending:N0} {(pending == 1 ? "file" : "files")} to index. Promoting now would " +
                             "make search return incomplete results. Wait for the backfill to finish.",
                     statusCode: 409);
 

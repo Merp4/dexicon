@@ -459,7 +459,7 @@ A file with no document extractor (anything but PDF, DOCX, PPTX, EPUB and HTML, 
 [transcripts](#claude-code-session-transcripts)) is read as text: UTF-16 with a byte order mark, otherwise UTF-8, otherwise
 Latin-1. One with a NUL byte in its first 8 KB and no UTF-16 byte order mark is binary by the walk's test
 ([step 7](#workspace--recursive-folder-index) above): it is stored with no text and that reason, and its file in each
-corpus is `empty` with no chunks. The test applies when an upload is first extracted, not when stored text is read again.
+corpus is `empty` (shown as **no text** in the web UI) with no chunks. The test applies when an upload is first extracted, not when stored text is read again.
 Identical bytes uploaded to one corpus under two names are one document, named by the later upload, unless the later name
 is already another document's in that corpus: then that file is refused and nothing is renamed.
 
