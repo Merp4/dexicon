@@ -482,6 +482,36 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnUploadOfUtf16TextWithAByteOrderMarkIsReadAsText()
+    {
+        // UTF-16 has a NUL in every other byte of ASCII text, which the binary test alone would refuse.
+        var bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("hello from notepad\n")).ToArray();
+        var stored = await _documents.StoreAsync(new MemoryStream(bytes), "notes.txt", TestContext.Current.CancellationToken);
+
+        stored.EmptyReason.ShouldBeNull();
+        (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.Text.ShouldBe("hello from notepad\n");
+    }
+
+    [Fact]
+    public async Task AStoredDocumentReadAgainKeepsItsTextWhenItsBytesHoldANulTheNewRuleWouldRefuse()
+    {
+        // Text stored before the binary test existed can hold a NUL early on. A repair of its row reads the bytes
+        // again, and must not empty a document that was searchable.
+        var stored = await _documents.StoreAsync(TextStream("alpha beta gamma"), "notes.md", TestContext.Current.CancellationToken);
+        var blob = Directory.EnumerateFiles(Path.Combine(_dataPath, "blobs"), stored.Sha256, SearchOption.AllDirectories).Single();
+        await File.WriteAllBytesAsync(blob, Encoding.UTF8.GetBytes("alpha\0beta gamma"), TestContext.Current.CancellationToken);
+        var row = await _db.BlobTexts.SingleAsync(t => t.Sha256 == stored.Sha256, TestContext.Current.CancellationToken);
+        row.ExtractedChars += 1;   // read back shorter than recorded: the damaged-row repair runs
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        _db.ChangeTracker.Clear();
+
+        var text = (await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken))!;
+
+        text.EmptyReason.ShouldBeNull();
+        text.Text.ShouldBe("alphabeta gamma");
+    }
+
+    [Fact]
     public async Task AnUploadWithNoDocumentFormatWhoseFirstBytesAreTextIsStillReadAsText()
     {
         var stored = await _documents.StoreAsync(TextStream("key = value\nother = 2\n"), "settings.toml", TestContext.Current.CancellationToken);

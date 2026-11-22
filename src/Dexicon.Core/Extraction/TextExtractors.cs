@@ -490,7 +490,7 @@ public sealed partial class PdfTextExtractor : ITextExtractor
 
         throw new UnreadableDocumentException(
             $"'{fileName}' has no PDF trailer (startxref and %%EOF) in its last {take:N0} "
-            + $"bytes, so it is truncated or corrupt, and its {length:N0} bytes were not read. Recovering a PDF with "
+            + $"bytes, so it is truncated or corrupt, and its {length:N0} bytes were not parsed. Recovering a PDF with "
             + "no cross-reference table means scanning it backwards a byte at a time, which can "
             + "take hours on a large file.");
     }

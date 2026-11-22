@@ -343,7 +343,9 @@ export function DocumentsView({
                     <span className="mono">{count(a.chunkCount, 'chunk')}</span>
                     {/* The corpus's name for the document when it is not the name it was first uploaded under:
                         identical bytes uploaded again under another name rename the attachment. */}
-                    {a.fileName !== d.originalFileName && <span className="mono">as {a.fileName}</span>}
+                    {d.originalFileName != null && a.fileName !== d.originalFileName && (
+                      <span className="mono">as {a.fileName}</span>
+                    )}
                     <span className="text-muted-foreground">
                       at {a.chunkSize.toLocaleString()} tokens, {a.chunkOverlap.toLocaleString()} overlap, {a.boundaryMode}
                     </span>
@@ -470,18 +472,19 @@ export function uploadSummary(stored: { fileName: string; fileId: string; dedupl
       `${reused} ${reused === 1 ? 'matches a document' : 'match documents'} already stored, so ` +
         `${reused === 1 ? 'its' : 'their'} text was not extracted again.`,
     );
+  // Every name in upload order, repeats included: the server renames on each one, so the last is the one kept
+  // even when it was also an earlier name.
   const namesByFile = new Map<string, string[]>();
   for (const s of stored) {
     if (!s.fileId) continue;
-    const names = namesByFile.get(s.fileId) ?? [];
-    if (!names.includes(s.fileName)) names.push(s.fileName);
-    namesByFile.set(s.fileId, names);
+    namesByFile.set(s.fileId, [...(namesByFile.get(s.fileId) ?? []), s.fileName]);
   }
   for (const names of namesByFile.values()) {
-    if (names.length < 2) continue;
-    const last = names[names.length - 1];
+    const distinct = [...new Set(names)];
+    if (distinct.length < 2) continue;
     sentences.push(
-      `${names.slice(0, -1).join(', ')} and ${last} have the same content, so the corpus holds one document, named ${last}.`,
+      `${distinct.slice(0, -1).join(', ')} and ${distinct[distinct.length - 1]} have the same content, ` +
+        `so the corpus holds one document, named ${names[names.length - 1]}.`,
     );
   }
   return sentences.join(' ');

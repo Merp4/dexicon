@@ -751,6 +751,14 @@ describe('what an upload and an attachment say', () => {
     );
   });
 
+  it('names the last name as the one kept when a name comes back later in the drop', () => {
+    expect(uploadSummary([
+      { fileName: 'a.md', fileId: 'f1', deduplicated: false },
+      { fileName: 'b.md', fileId: 'f1', deduplicated: true },
+      { fileName: 'a.md', fileId: 'f1', deduplicated: true },
+    ])).toContain('a.md and b.md have the same content, so the corpus holds one document, named a.md.');
+  });
+
   it('says nothing about shared content when every name is its own document', () => {
     expect(uploadSummary([
       { fileName: 'a.md', fileId: 'f1', deduplicated: false },

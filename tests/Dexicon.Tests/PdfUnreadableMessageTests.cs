@@ -49,7 +49,7 @@ public sealed class PdfUnreadableMessageTests
         var ex = Should.Throw<UnreadableDocumentException>(() =>
             new PdfTextExtractor().Extract(new MemoryStream(truncated), "corrupt.pdf"));
 
-        ex.Message.ShouldStartWith($"'corrupt.pdf' has no PDF trailer (startxref and %%EOF) in its last {truncated.Length} bytes, so it is truncated or corrupt, and its {truncated.Length} bytes were not read.");
+        ex.Message.ShouldStartWith($"'corrupt.pdf' has no PDF trailer (startxref and %%EOF) in its last {truncated.Length} bytes, so it is truncated or corrupt, and its {truncated.Length} bytes were not parsed.");
         ex.Message.ShouldContain("on a large file");
     }
 }
