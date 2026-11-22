@@ -162,16 +162,7 @@ export function DocumentsView({
         // another document's name, or an extraction that timed out or failed on the server) come
         // back in `failed` beside the stored ones, and are the only place the reason is said.
         setNotStored(result.failed);
-        const deduped = result.stored.filter((s) => s.deduplicated).length;
-        // On screen, not in the console. Re-uploading a file that is already stored is
-        // the case that looks like nothing happened — same row, same count, no new
-        // document — and the explanation was being written somewhere nobody was looking.
-        setLastUpload(
-          deduped === 0
-            ? `${result.stored.length} file${result.stored.length === 1 ? '' : 's'} stored.`
-            : `${deduped} of ${result.stored.length} ${deduped === 1 ? 'was' : 'were'} already stored; ` +
-              'the stored extraction was used.',
-        );
+        setLastUpload(uploadSummary(result.stored));
         await load();
         await onRefresh();
       } catch (e) {
@@ -271,7 +262,7 @@ export function DocumentsView({
           </div>
           {targetSets && (
             <p className="m-0 text-xs text-muted-foreground">
-              Chunked as {targetSets.map((t) => `${targetName}:${t.name} (${t.chunkSize} tokens / ${t.chunkOverlap} overlap)`).join(', ')}.
+              Chunked as {targetSets.map((t) => `${targetName}:${t.name} (${t.chunkSize.toLocaleString()} tokens / ${t.chunkOverlap.toLocaleString()} overlap)`).join(', ')}.
             </p>
           )}
 
@@ -300,7 +291,7 @@ export function DocumentsView({
               <p className="m-0 font-semibold">{count(refusedFiles.length, 'file')} not stored:</p>
               <ul className="m-0 mt-1 list-disc pl-5">
                 {refusedFiles.map((f, i) => (
-                  <li key={`${f.file}-${i}`}>{`${f.file}: ${f.error}`}</li>
+                  <li key={`${f.file}-${i}`}>{f.error.includes(`'${f.file}'`) ? f.error : `${f.file}: ${f.error}`}</li>
                 ))}
               </ul>
             </>
@@ -350,7 +341,14 @@ export function DocumentsView({
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
                     <span className="mono">{count(a.chunkCount, 'chunk')}</span>
-                    <span className="text-muted-foreground">at {a.chunkSize} tokens, {a.chunkOverlap} overlap, {a.boundaryMode}</span>
+                    {/* The corpus's name for the document when it is not the name it was first uploaded under:
+                        identical bytes uploaded again under another name rename the attachment. */}
+                    {d.originalFileName != null && a.fileName !== d.originalFileName && (
+                      <span className="mono">as {a.fileName}</span>
+                    )}
+                    <span className="text-muted-foreground">
+                      at {a.chunkSize.toLocaleString()} tokens, {a.chunkOverlap.toLocaleString()} overlap, {a.boundaryMode}
+                    </span>
                     <span className="flex-1" />
                     <Button
                       variant="danger"
@@ -425,7 +423,7 @@ function DetachModal({
         {others.length === 0
           ? 'No other corpus holds this document, so it is deleted, with its extracted text, its stored file '
             + 'and its chunks. Upload it again to restore it.'
-          : `It stays stored for ${count(others.length, 'other corpus', 'other corpora')}. `
+          : `${others.map((o) => o.corpusName).join(', ')} ${others.length === 1 ? 'keeps' : 'keep'} it. `
             + `Its chunks in ${attachment.corpusName} are deleted.`}
       </p>
       <div className="flex gap-2 justify-end">
@@ -447,6 +445,51 @@ function DetachModal({
   );
 }
 
+/** The server's extractor class, as the format it reads. An unknown name is shown as sent. */
+export function extractorLabel(extractor: string): string {
+  const labels: Record<string, string> = {
+    PdfTextExtractor: 'PDF',
+    DocxTextExtractor: 'DOCX',
+    PptxTextExtractor: 'PPTX',
+    EpubTextExtractor: 'EPUB',
+    HtmlTextExtractor: 'HTML',
+    ClaudeTranscriptTextExtractor: 'Claude Code transcript',
+    PlainText: 'plain text',
+  };
+  return labels[extractor] ?? extractor;
+}
+
+/**
+ * What an upload did, in sentences. Identical bytes are one document per corpus, so two names for them
+ * leave one attachment under the later name (DocumentService.AttachHeldAsync); the server answers with the
+ * same file id for both, which is how they are found here.
+ */
+export function uploadSummary(stored: { fileName: string; fileId: string; deduplicated: boolean }[]): string {
+  const sentences = [`${count(stored.length, 'file')} stored.`];
+  const reused = stored.filter((s) => s.deduplicated).length;
+  if (reused > 0)
+    sentences.push(
+      `${reused} ${reused === 1 ? 'matches a document' : 'match documents'} already stored, so ` +
+        `${reused === 1 ? 'its' : 'their'} text was not extracted again.`,
+    );
+  // Every name in upload order, repeats included: the server renames on each one, so the last is the one kept
+  // even when it was also an earlier name.
+  const namesByFile = new Map<string, string[]>();
+  for (const s of stored) {
+    if (!s.fileId) continue;
+    namesByFile.set(s.fileId, [...(namesByFile.get(s.fileId) ?? []), s.fileName]);
+  }
+  for (const names of namesByFile.values()) {
+    const distinct = [...new Set(names)];
+    if (distinct.length < 2) continue;
+    sentences.push(
+      `${distinct.slice(0, -1).join(', ')} and ${distinct[distinct.length - 1]} have the same content, ` +
+        `so the corpus holds one document, named ${names[names.length - 1]}.`,
+    );
+  }
+  return sentences.join(' ');
+}
+
 function AttachModal({
   document: doc,
   corpora,
@@ -460,7 +503,9 @@ function AttachModal({
 }) {
   const attachedTo = new Set(doc.attachments.map((a) => a.corpusId));
   const available = corpora.filter((c) => !attachedTo.has(c.id));
-  const [target, setTarget] = useState(available[0]?.name ?? '');
+  // Chosen for the user only when there is one: preselecting the first of several put a real
+  // corpus one click from holding a document meant for another.
+  const [target, setTarget] = useState(available.length === 1 ? available[0].name : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
@@ -496,7 +541,7 @@ function AttachModal({
               {chosen.chunkSets.map((s, i) => (
                 <span key={s.id}>
                   {i > 0 && ', '}
-                  <strong>{s.name}</strong> ({s.chunkSize} tokens / {s.chunkOverlap} overlap, {s.boundaryMode})
+                  <strong>{s.name}</strong> ({s.chunkSize.toLocaleString()} tokens / {s.chunkOverlap.toLocaleString()} overlap, {s.boundaryMode})
                 </span>
               ))}
               .
@@ -553,7 +598,7 @@ function ExtractedTextModal({
         <>
           <div className="mb-3 text-sm text-muted-foreground">
             <span title={localTime(text.extractedUtc)}>
-              {text.extractor} · {text.extractedChars.toLocaleString()} chars · extracted {relativeTime(text.extractedUtc)}
+              Read as {extractorLabel(text.extractor)} · {text.extractedChars.toLocaleString()} chars · extracted {relativeTime(text.extractedUtc)}
             </span>
           </div>
           {text.emptyReason && (

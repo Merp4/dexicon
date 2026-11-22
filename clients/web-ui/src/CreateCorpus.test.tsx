@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CorporaView } from './App';
-import { ApiError, type EmbeddingModelInfo } from './api';
+import { ApiError, type Corpus, type EmbeddingModelInfo } from './api';
 
 /**
  * Creating a corpus, and choosing what will embed it.
@@ -208,6 +208,20 @@ describe('creating a corpus', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(/did not answer/);
+  });
+});
+
+describe('the list of corpora', () => {
+  it('says a corpus that has never run is not indexed yet, rather than "indexed never"', () => {
+    const fresh = {
+      id: 'c1', name: 'fresh', state: 'ready', description: null, lastIndexedUtc: null,
+      fileCount: 0, chunkCount: 0, skippedCount: 0, failedCount: 0, sources: [], chunkSets: [],
+    } as unknown as Corpus;
+
+    render(<CorporaView {...props} corpora={[fresh]} />);
+
+    expect(screen.getByText('not indexed yet')).toBeInTheDocument();
+    expect(screen.queryByText(/indexed never/)).not.toBeInTheDocument();
   });
 });
 

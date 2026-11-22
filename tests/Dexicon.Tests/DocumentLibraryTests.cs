@@ -444,13 +444,15 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
     {
         // Plain text is accepted as it is, so a U+0000 in it reached the table, which cut the
         // value there. Every read then failed the length check, repaired the row with the same
-        // text, and cleared the chunk states: re-embedding the upload on every pass.
+        // text, and cleared the chunk states: re-embedding the upload on every pass. The NULs
+        // sit past the first 8 KB, which a NUL inside would refuse as binary.
         var corpus = AddCorpus("books", 512, 64);
-        var stored = await _documents.StoreAsync(TextStream("alpha\0beta\n\ngamma\0delta"), "notes.md", TestContext.Current.CancellationToken);
+        var head = new string('h', WorkspaceWalker.BinarySniffBytes) + "\n\n";
+        var stored = await _documents.StoreAsync(TextStream(head + "alpha\0beta\n\ngamma\0delta"), "notes.md", TestContext.Current.CancellationToken);
         var file = await _documents.AttachAsync(corpus, stored.Sha256, "notes.md", TestContext.Current.CancellationToken);
 
         var row = (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!;
-        row.Text.ShouldBe("alphabeta\n\ngammadelta");
+        row.Text.ShouldBe(head + "alphabeta\n\ngammadelta");
         row.Text.Length.ShouldBe(row.ExtractedChars, "what the table returns is as long as what was written");
 
         var state = StateOf(file, corpus);
@@ -465,6 +467,57 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         after.Status.ShouldBe(FileStatus.Indexed, "the text was never damaged, so nothing was invalidated");
         after.ContentHash.ShouldBe("indexed");
         (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.ExtractedUtc.ShouldBe(row.ExtractedUtc);
+    }
+
+    [Fact]
+    public async Task AnUploadWithNoDocumentFormatAndBinaryContentIsStoredWithNoTextAndSaysWhy()
+    {
+        // A PNG has no extractor, so it was decoded as text: 69 bytes became 49 characters of
+        // noise, indexed as one chunk that matched a keyword search for "IHDR IDAT".
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52];
+        var stored = await _documents.StoreAsync(new MemoryStream(png), "image.png", TestContext.Current.CancellationToken);
+
+        stored.ExtractedChars.ShouldBe(0);
+        stored.EmptyReason.ShouldNotBeNull().ShouldStartWith("'image.png' is binary (a NUL byte in its first 8,192 bytes).");
+    }
+
+    [Fact]
+    public async Task AnUploadOfUtf16TextWithAByteOrderMarkIsReadAsText()
+    {
+        // UTF-16 has a NUL in every other byte of ASCII text, which the binary test alone would refuse.
+        var bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("hello from notepad\n")).ToArray();
+        var stored = await _documents.StoreAsync(new MemoryStream(bytes), "notes.txt", TestContext.Current.CancellationToken);
+
+        stored.EmptyReason.ShouldBeNull();
+        (await _documents.TextFor(stored.Sha256, TestContext.Current.CancellationToken))!.Text.ShouldBe("hello from notepad\n");
+    }
+
+    [Fact]
+    public async Task AStoredDocumentReadAgainKeepsItsTextWhenItsBytesHoldANulTheNewRuleWouldRefuse()
+    {
+        // Text stored before the binary test existed can hold a NUL early on. A repair of its row reads the bytes
+        // again, and must not empty a document that was searchable.
+        var stored = await _documents.StoreAsync(TextStream("alpha beta gamma"), "notes.md", TestContext.Current.CancellationToken);
+        var blob = Directory.EnumerateFiles(Path.Combine(_dataPath, "blobs"), stored.Sha256, SearchOption.AllDirectories).Single();
+        await File.WriteAllBytesAsync(blob, Encoding.UTF8.GetBytes("alpha\0beta gamma"), TestContext.Current.CancellationToken);
+        var row = await _db.BlobTexts.SingleAsync(t => t.Sha256 == stored.Sha256, TestContext.Current.CancellationToken);
+        row.ExtractedChars += 1;   // read back shorter than recorded: the damaged-row repair runs
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        _db.ChangeTracker.Clear();
+
+        var text = (await _documents.CurrentTextFor(stored.Sha256, "notes.md", ct: TestContext.Current.CancellationToken))!;
+
+        text.EmptyReason.ShouldBeNull();
+        text.Text.ShouldBe("alphabeta gamma");
+    }
+
+    [Fact]
+    public async Task AnUploadWithNoDocumentFormatWhoseFirstBytesAreTextIsStillReadAsText()
+    {
+        var stored = await _documents.StoreAsync(TextStream("key = value\nother = 2\n"), "settings.toml", TestContext.Current.CancellationToken);
+
+        stored.EmptyReason.ShouldBeNull();
+        stored.ExtractedChars.ShouldBe("key = value\nother = 2\n".Length);
     }
 
     [Fact]

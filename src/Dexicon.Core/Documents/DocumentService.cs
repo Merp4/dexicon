@@ -365,8 +365,17 @@ public sealed class DocumentService(
             ExtractedText extracted;
             if (extractor is null)
             {
-                // Not a document format: treat as plain text, the same as a code file.
+                // Not a document format: treat as plain text, the same as a code file, and refuse binary
+                // content by the walker's test. Decoded, an image or archive became a few dozen characters
+                // of noise that was chunked, embedded and matched keyword searches. UTF-16 text has a NUL
+                // in every other byte, so a byte order mark exempts it, and DecodeText reads it. Only a
+                // first extraction refuses: a stored document read again (keepOnUnexpected) keeps the text
+                // it was stored with rather than being emptied by a rule newer than it.
                 var raw = await File.ReadAllBytesAsync(path, ct);
+                if (!keepOnUnexpected && Utf16Bom(raw) is null && Indexing.WorkspaceWalker.LooksBinary(raw))
+                    throw new UnreadableDocumentException(
+                        $"'{fileName}' is binary (a NUL byte in its first {Indexing.WorkspaceWalker.BinarySniffBytes:N0} bytes). "
+                        + "Text files and PDF, DOCX, PPTX, EPUB and HTML documents can be read.");
                 extracted = new ExtractedText(DecodeText(raw), []);
             }
             else
@@ -932,8 +941,16 @@ public sealed class DocumentService(
             ? []
             : JsonSerializer.Deserialize<List<ExtractedUnit>>(text.UnitsJson) ?? [];
 
+    /// <summary>The encoding a UTF-16 byte order mark at the start names, or null without one.</summary>
+    private static Encoding? Utf16Bom(byte[] bytes) =>
+        bytes.Length < 2 ? null
+        : bytes[0] == 0xFF && bytes[1] == 0xFE ? Encoding.Unicode
+        : bytes[0] == 0xFE && bytes[1] == 0xFF ? Encoding.BigEndianUnicode
+        : null;
+
     private static string DecodeText(byte[] bytes)
     {
+        if (Utf16Bom(bytes) is { } utf16) return utf16.GetString(bytes.AsSpan(2));
         try
         {
             return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(

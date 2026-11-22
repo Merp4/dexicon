@@ -388,6 +388,14 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         {
             document = PdfDocument.Open(source);
         }
+        catch (UglyToad.PdfPig.Exceptions.PdfDocumentEncryptedException ex)
+        {
+            // PdfPig names this case itself, so the message says it rather than offering
+            // "encrypted or corrupt" for a file the library has identified.
+            buffered?.Dispose();
+            throw new UnreadableDocumentException(
+                $"'{fileName}' is encrypted with a password, so its text cannot be read.", ex);
+        }
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             buffered?.Dispose();
@@ -482,9 +490,9 @@ public sealed partial class PdfTextExtractor : ITextExtractor
 
         throw new UnreadableDocumentException(
             $"'{fileName}' has no PDF trailer (startxref and %%EOF) in its last {take:N0} "
-            + $"bytes, so it is truncated rather than merely unusual. Its {length:N0} bytes "
-            + "were not read: a PDF with no cross-reference table can only be recovered by "
-            + "scanning it backwards a byte at a time, which costs hours on a file this size.");
+            + $"bytes, so it is truncated or corrupt, and its {length:N0} bytes were not parsed. Recovering a PDF with "
+            + "no cross-reference table means scanning it backwards a byte at a time, which can "
+            + "take hours on a large file.");
     }
 
     /// <summary>

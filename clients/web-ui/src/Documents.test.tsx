@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DocumentsView } from './Documents';
+import { DocumentsView, extractorLabel, uploadSummary } from './Documents';
 import { ApiError, type Corpus, type LibraryDocument } from './api';
 
 /**
@@ -318,7 +318,8 @@ describe('uploading a batch', () => {
     await addAndUpload([new File(['x'], 'notes.txt'), new File([''], '(request)')]);
 
     expect(await screen.findByText('1 file not stored:')).toBeInTheDocument();
-    expect(screen.getByText("(request): '(request)' is empty.")).toBeInTheDocument();
+    // The server's message names the file already, so it is not prefixed with the name again.
+    expect(screen.getByText("'(request)' is empty.")).toBeInTheDocument();
   });
 
   it('shows a failure of the whole request without counting a file', async () => {
@@ -616,7 +617,7 @@ describe('detaching a document', () => {
     await user.click((await screen.findAllByRole('button', { name: 'Detach' }))[0]);
     const dialog = await screen.findByRole('dialog', { name: 'Detach moby-dick.epub from library?' });
 
-    expect(dialog).toHaveTextContent('It stays stored for 1 other corpus');
+    expect(dialog).toHaveTextContent('fine keeps it. Its chunks in library are deleted.');
     expect(detachDocument).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(detachDocument).not.toHaveBeenCalled();
@@ -720,5 +721,66 @@ describe('an attachment that is still pending', () => {
     await vi.advanceTimersByTimeAsync(3500);
     expect(await screen.findByText('980 chunks')).toBeInTheDocument();
     expect(noop.onError).not.toHaveBeenCalled();
+  });
+});
+
+/** Found by uploading a batch of fixtures to the running app. */
+describe('what an upload and an attachment say', () => {
+  it('chooses no corpus to attach to when there are several, so Attach waits for a choice', async () => {
+    // It preselected the first corpus in the list, which put a real library one click from a test document.
+    const user = userEvent.setup();
+    render(<DocumentsView corpora={[corpus('library'), corpus('fine'), corpus('archive'), corpus('books')]} {...noop} />);
+
+    await user.click(await screen.findByRole('button', { name: /attach to another corpus/i }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByLabelText('Corpus')).toHaveTextContent(/choose a corpus/i);
+    expect(within(dialog).getByRole('button', { name: 'Attach' })).toBeDisabled();
+  });
+
+  it('says when two names had the same content and which name the corpus keeps', () => {
+    const summary = uploadSummary([
+      { fileName: 'notes-copy.md', fileId: 'f1', deduplicated: false },
+      { fileName: 'notes.md', fileId: 'f1', deduplicated: true },
+      { fileName: 'plain.txt', fileId: 'f2', deduplicated: false },
+    ]);
+
+    expect(summary).toBe(
+      '3 files stored. 1 matches a document already stored, so its text was not extracted again. ' +
+        'notes-copy.md and notes.md have the same content, so the corpus holds one document, named notes.md.',
+    );
+  });
+
+  it('names the last name as the one kept when a name comes back later in the drop', () => {
+    expect(uploadSummary([
+      { fileName: 'a.md', fileId: 'f1', deduplicated: false },
+      { fileName: 'b.md', fileId: 'f1', deduplicated: true },
+      { fileName: 'a.md', fileId: 'f1', deduplicated: true },
+    ])).toContain('a.md and b.md have the same content, so the corpus holds one document, named a.md.');
+  });
+
+  it('says nothing about shared content when every name is its own document', () => {
+    expect(uploadSummary([
+      { fileName: 'a.md', fileId: 'f1', deduplicated: false },
+      { fileName: 'b.md', fileId: 'f2', deduplicated: true },
+    ])).toBe('2 files stored. 1 matches a document already stored, so its text was not extracted again.');
+  });
+
+  it("shows the corpus's name for a document when it is not the name first uploaded", async () => {
+    listDocuments.mockResolvedValue([
+      { ...doc, attachments: [{ ...doc.attachments[0], fileName: 'whale.epub' }, doc.attachments[1]] },
+    ]);
+
+    render(<DocumentsView corpora={[corpus('library'), corpus('fine')]} {...noop} />);
+
+    const card = (await screen.findByText('library')).closest('article')!;
+    expect(within(card).getByText('as whale.epub')).toBeInTheDocument();
+    expect(within(card).queryByText('as moby-dick.epub')).not.toBeInTheDocument();
+  });
+
+  it('names the format an extractor read rather than its class', () => {
+    expect(extractorLabel('EpubTextExtractor')).toBe('EPUB');
+    expect(extractorLabel('PlainText')).toBe('plain text');
+    expect(extractorLabel('SomethingNew')).toBe('SomethingNew');
   });
 });

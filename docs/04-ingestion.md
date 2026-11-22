@@ -447,6 +447,14 @@ Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and record
 extraction times out or fails for a reason on the server leaves its bytes in `/data/blobs` with no
 `blobs` row, which the sweep at the next start deletes (see the paragraph on extraction below).
 
+A file with no document extractor (anything but PDF, DOCX, PPTX, EPUB and HTML, so an uploaded `.jsonl` too, see
+[transcripts](#claude-code-session-transcripts)) is read as text: UTF-16 with a byte order mark, otherwise UTF-8, otherwise
+Latin-1. One with a NUL byte in its first 8 KB and no UTF-16 byte order mark is binary by the walk's test
+([step 7](#workspace--recursive-folder-index) above): it is stored with no text and that reason, and its file in each
+corpus is `empty` with no chunks. The test applies when an upload is first extracted, not when stored text is read again.
+Identical bytes uploaded to one corpus under two names are one document, named by the later upload, unless the later name
+is already another document's in that corpus: then that file is refused and nothing is renamed.
+
 **Extraction is cached against the blob hash, and chunking is not.** That split is the
 whole design, and it is what makes the same document cheap to hold several ways:
 

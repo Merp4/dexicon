@@ -949,7 +949,7 @@ export function SearchView({ corpora, onError }: { corpora: Corpus[]; onError: (
         />
       )}
 
-      {!result && (
+      {!result && !busy && (
         <Empty
           title="Search your indexed content"
           hint={corpora.length === 0 ? 'No corpora yet. Create one under Corpora first.' : 'Hybrid blends meaning with exact terms. Keyword works even when embeddings are down.'}
@@ -998,7 +998,7 @@ export function CorporaView({
                   <strong>{c.name}</strong>
                   <Badge tone={stateTone(c.state)}>{c.state}</Badge>
                   <span className="flex-1" />
-                  <span className="dim text-xs" title={localTime(c.lastIndexedUtc)}>indexed {relativeTime(c.lastIndexedUtc)}</span>
+                  <span className="dim text-xs" title={localTime(c.lastIndexedUtc)}>{c.lastIndexedUtc ? `indexed ${relativeTime(c.lastIndexedUtc)}` : 'not indexed yet'}</span>
                 </div>
 
                 {c.description && <p className="dim mt-1.5 mx-0 mb-0 text-sm">{c.description}</p>}
