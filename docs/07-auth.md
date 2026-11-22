@@ -186,14 +186,15 @@ Rules:
    reachable set produces a **named error** (`Unknown corpus 'x'. Corpora this key can
    reach: …`) rather than being dropped. Dropping it would return incomplete results without
    indicating so.
-3. **If the result is empty, throw.** There is no code path that queries Qdrant without a
-   `corpus_id` filter.
+3. **If the result is empty, throw.** No search reaches Qdrant without a `corpus_id`
+   filter. The other reads (a file's chunks for `get_context`) filter by chunk set and run
+   after scope resolution.
 
 The last rule is the one that matters, so it is defended three times over:
 
 - **Application**: `ResolveReadableAsync` throws rather than returning an empty scope.
-- **Repository**: the Qdrant client wrapper raises `UnscopedQueryException` for any query
-  whose filter lacks a `corpus_id` condition, naming the calling method.
+- **Repository**: `QdrantVectorStore.SearchAsync` raises `UnscopedQueryException`, naming
+  itself, for a search with no corpus in its scope.
 - **Storage**: `hnsw_config.m = 0` ([03](03-data-model.md)) means an unfiltered query has no
   index to traverse. A leak would therefore require a brute-force scan, which is slow and
   detectable.

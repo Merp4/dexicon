@@ -126,8 +126,8 @@ Each of these has been decided, with the reasoning recorded in
 - Timestamps are UTC everywhere: stored, returned, logged. The browser is the only thing
   that converts, because it is the only component that knows which clock applies. Any
   property holding one is named `…Utc`, and a test enforces this.
-- Errors are written for whoever has to act on them. `Unknown corpus 'api'. Visible
-  corpora: api-repo, rfc-library.` is actionable; a stack trace is not.
+- Errors are written for whoever has to act on them. `Unknown corpus 'api'. Corpora
+  this key can reach: api-repo, rfc-library.` is actionable; a stack trace is not.
 
 ## Secrets
 
