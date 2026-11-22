@@ -4,7 +4,7 @@ import {
 } from './api';
 import {
   Badge, Button, CopyButton, Empty, ErrorBanner, Field, Modal, Notice, Select, SelectItem, Spinner,
-  formatBytes, localTime, relativeTime, stateTone,
+  fileStatusLabel, formatBytes, localTime, relativeTime, stateTone,
 } from './ui';
 import { cn } from 'cn';
 import { count } from './lib/units';
@@ -339,7 +339,7 @@ export function DocumentsView({
                     className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-1.5 text-sm"
                   >
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
-                    <Badge tone={stateTone(a.status)}>{a.status}</Badge>
+                    <Badge tone={stateTone(a.status)}>{fileStatusLabel(a.status)}</Badge>
                     <span className="mono">{count(a.chunkCount, 'chunk')}</span>
                     {/* The corpus's name for the document when it is not the name it was first uploaded under:
                         identical bytes uploaded again under another name rename the attachment. */}

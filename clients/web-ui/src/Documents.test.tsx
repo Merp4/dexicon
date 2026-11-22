@@ -660,6 +660,23 @@ describe('detaching a document', () => {
   });
 });
 
+describe('an attachment with no text', () => {
+  it('is badged as having no text rather than as empty', async () => {
+    // The API's `empty` read as a file of zero bytes for a PDF that could not be read.
+    const noText = {
+      ...doc,
+      extractedChars: 0,
+      emptyReason: "'locked.pdf' is encrypted with a password, so its text cannot be read.",
+      attachments: [{ ...doc.attachments[0], status: 'empty', chunkCount: 0 }],
+    } as unknown as LibraryDocument;
+    listDocuments.mockResolvedValue([noText]);
+    render(<DocumentsView corpora={[corpus('library')]} {...noop} />);
+
+    expect(await screen.findByText('no text')).toBeInTheDocument();
+    expect(screen.queryByText('empty')).not.toBeInTheDocument();
+  });
+});
+
 describe('an attachment that is still pending', () => {
   const pendingDoc = {
     ...doc,

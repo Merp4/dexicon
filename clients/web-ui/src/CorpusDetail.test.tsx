@@ -2313,6 +2313,19 @@ describe('the file list', () => {
     expect(await screen.findByText('No failed files')).toBeInTheDocument();
     expect(screen.queryByText(/Clear the filter/)).not.toBeInTheDocument();
   });
+
+  it('names the empty status by what it means: no text', async () => {
+    // "No empty files" read as a claim about file sizes.
+    listFiles.mockResolvedValue(page(1, 1));
+    render(<CorpusDetail {...props} />);
+    await screen.findByText('book-0.pdf');
+    listFiles.mockResolvedValue({ total: 0, chunkSet: 'default', files: [] });
+
+    await userEvent.click(screen.getByRole('radio', { name: 'no text' }));
+
+    expect(listFiles).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ status: 'empty' }));
+    expect(await screen.findByText('No files without text')).toBeInTheDocument();
+  });
 });
 
 describe('when a run finishes', () => {

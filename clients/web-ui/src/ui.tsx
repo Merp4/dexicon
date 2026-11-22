@@ -475,6 +475,15 @@ export function Badge({
   return <span className={cn(badgeVariants({ tone }), className)}>{children}</span>;
 }
 
+/**
+ * A file's status as a badge shows it. The API's `empty` covers every file that produced no text (an empty file, a scanned
+ * PDF, a binary upload, an upload refused as unreadable), and on its own it read as a file of zero bytes. Every other
+ * status is shown as sent.
+ */
+export function fileStatusLabel(status: string): string {
+  return status === 'empty' ? 'no text' : status;
+}
+
 export function stateTone(state: string): Tone {
   switch (state) {
     case 'ready':

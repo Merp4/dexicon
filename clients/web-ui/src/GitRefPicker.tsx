@@ -115,8 +115,8 @@ export function GitRefPicker({
       {loading && <p className="dim m-0 text-xs">Reading the repository's branches…</p>}
       {read?.error !== undefined && (
         <Notice tone="warn" className="text-xs">
-          The branches could not be listed: {read.error instanceof Error ? read.error.message : String(read.error)} A
-          ref can still be typed.
+          The branches could not be listed. Type a ref instead. Reason:{' '}
+          {read.error instanceof Error ? read.error.message : String(read.error)}
         </Notice>
       )}
       {read?.result && !read.result.isRepository && (
