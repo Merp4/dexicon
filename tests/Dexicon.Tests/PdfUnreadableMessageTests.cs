@@ -38,18 +38,21 @@ public sealed class PdfUnreadableMessageTests
         var ex = Should.Throw<UnreadableDocumentException>(() =>
             new PdfTextExtractor().Extract(new MemoryStream(Convert.FromBase64String(EncryptedPdf)), "locked.pdf"));
 
-        ex.Message.ShouldBe("'locked.pdf' is encrypted with a password, so its text cannot be read.");
+        ex.Message.ShouldBe("'locked.pdf' is encrypted with a password, so its text cannot be read. "
+            + "To index it, use a copy saved without the password.");
     }
 
     [Fact]
-    public void ATruncatedPdfSaysItWasNotReadWithoutClaimingASmallFileWouldTakeHours()
+    public void ATruncatedPdfSaysItIsIncompleteAndWasNotParsed()
     {
         var truncated = Encoding.ASCII.GetBytes("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R\n");
 
         var ex = Should.Throw<UnreadableDocumentException>(() =>
             new PdfTextExtractor().Extract(new MemoryStream(truncated), "corrupt.pdf"));
 
-        ex.Message.ShouldStartWith($"'corrupt.pdf' has no PDF trailer (startxref and %%EOF) in its last {truncated.Length} bytes, so it is truncated or corrupt, and its {truncated.Length} bytes were not parsed.");
-        ex.Message.ShouldContain("on a large file");
+        ex.Message.ShouldBe(
+            "'corrupt.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means a download "
+            + "or copy was cut short. Download or copy it again. "
+            + $"(Not parsed: the last {truncated.Length} of its {truncated.Length} bytes do not hold both startxref and %%EOF.)");
     }
 }

@@ -144,7 +144,7 @@ public sealed class HtmlNestingTests
         var thrown = Should.Throw<UnreadableDocumentException>(
             () => Extract(Tags(101), extractor: new HtmlTextExtractor(maxTags: 100)));
 
-        thrown.Message.ShouldBe("page.html contains more than 100 tags, which is more than can be read.");
+        thrown.Message.ShouldBe("'page.html' has more than 100 tags, which is over the limit for one document or chapter.");
         thrown.Unexpected.ShouldBeFalse();
     }
 
@@ -224,7 +224,7 @@ public sealed class HtmlNestingTests
         var epub = TestEpubs.WithAChapter("&nbsp;" + Repeat("<p>x", 97));
 
         Should.Throw<UnreadableDocumentException>(() => Within(epub, Roomy, maxTags: 100))
-            .Message.ShouldBe("Chapter 1 contains more than 100 tags, which is more than can be read.");
+            .Message.ShouldBe("Chapter 1 has more than 100 tags, which is over the limit for one document or chapter.");
     }
 
     [Fact]
@@ -241,6 +241,6 @@ public sealed class HtmlNestingTests
         var epub = TestEpubs.WithAnEntry("&nbsp;" + Repeat("<p>x", 97));
 
         Should.Throw<UnreadableDocumentException>(() => Within(epub, Roomy, maxTags: 100))
-            .Message.ShouldBe("OEBPS/ch1.xhtml contains more than 100 tags, which is more than can be read.");
+            .Message.ShouldBe("OEBPS/ch1.xhtml has more than 100 tags, which is over the limit for one document or chapter.");
     }
 }

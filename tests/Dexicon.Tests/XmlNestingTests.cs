@@ -47,7 +47,7 @@ public sealed class XmlNestingTests
             () => Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(DocxPairsAtTheLimit + 1), "a.docx"));
 
         thrown.Message.ShouldBe(
-            $"a.docx (word/document.xml) nests XML elements more than {XmlNesting.MaxDepth} deep, which is too deep to read.");
+            $"'a.docx' (word/document.xml) nests XML elements more than {XmlNesting.MaxDepth} levels deep, which is over the limit.");
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public sealed class XmlNestingTests
         // The Open XML SDK overflowed the stack at about 5,000.
         Should.Throw<UnreadableDocumentException>(
             () => Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(100_000), "a.docx"))
-            .Message.ShouldContain("too deep");
+            .Message.ShouldContain("levels deep");
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class XmlNestingTests
         var bytes = TestEpubs.DocxWithDocumentXml("<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p>");
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new DocxTextExtractor(), bytes, "a.docx"))
-            .Message.ShouldStartWith("'a.docx' is not a readable .docx");
+            .Message.ShouldStartWith("'a.docx' could not be read as a Word document.");
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public sealed class XmlNestingTests
     {
         Should.Throw<UnreadableDocumentException>(
                 () => Extract(new DocxTextExtractor(), "not a zip"u8.ToArray(), "a.docx"))
-            .Message.ShouldStartWith("'a.docx' is not a readable .docx");
+            .Message.ShouldStartWith("'a.docx' could not be read as a Word document.");
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class XmlNestingTests
         var thrown = Should.Throw<UnreadableDocumentException>(
             () => Extract(new PptxTextExtractor(), TestEpubs.PptxNestedBy(PptxGroupsAtTheLimit + 1), "a.pptx"));
 
-        thrown.Message.ShouldContain("a.pptx (ppt/slides/slide1.xml) nests XML elements more than");
+        thrown.Message.ShouldContain("'a.pptx' (ppt/slides/slide1.xml) nests XML elements more than");
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public sealed class XmlNestingTests
     {
         Should.Throw<UnreadableDocumentException>(
             () => Extract(new PptxTextExtractor(), TestEpubs.PptxNestedBy(100_000), "a.pptx"))
-            .Message.ShouldContain("too deep");
+            .Message.ShouldContain("levels deep");
     }
 
     [Fact]
@@ -122,7 +122,7 @@ public sealed class XmlNestingTests
         var epub = TestEpubs.WithAChapter("<p>kept</p>", NavigationPointsAtTheLimit + 1);
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), epub, "book.epub"))
-            .Message.ShouldContain("book.epub (toc.ncx) nests XML elements more than");
+            .Message.ShouldContain("'book.epub' (toc.ncx) nests XML elements more than");
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public sealed class XmlNestingTests
         var epub = TestEpubs.WithAChapter("<p>kept</p>", 100_000);
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), epub, "book.epub"))
-            .Message.ShouldContain("too deep");
+            .Message.ShouldContain("levels deep");
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public sealed class XmlNestingTests
         var epub = TestEpubs.WithANavigationDocumentNestedBy(NavigationListsAtTheLimit + 1);
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), epub, "book.epub"))
-            .Message.ShouldContain("book.epub (nav.xhtml) nests XML elements more than");
+            .Message.ShouldContain("'book.epub' (nav.xhtml) nests XML elements more than");
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public sealed class XmlNestingTests
         var epub = TestEpubs.WithANavigationDocumentNestedBy(100_000);
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), epub, "book.epub"))
-            .Message.ShouldContain("too deep");
+            .Message.ShouldContain("levels deep");
     }
 
     // The libraries load a part by the relationship or manifest that names it, so it can be called anything.
@@ -176,7 +176,7 @@ public sealed class XmlNestingTests
 
         Should.Throw<UnreadableDocumentException>(
                 () => Extract(new DocxTextExtractor(), TestEpubs.DocxNestedBy(20_000, partName), "a.docx"))
-            .Message.ShouldContain($"a.docx ({partName}) nests XML elements more than");
+            .Message.ShouldContain($"'a.docx' ({partName}) nests XML elements more than");
     }
 
     [Theory]
@@ -188,7 +188,7 @@ public sealed class XmlNestingTests
 
         Should.Throw<UnreadableDocumentException>(
                 () => Extract(new PptxTextExtractor(), TestEpubs.PptxNestedBy(20_000, slidePart), "a.pptx"))
-            .Message.ShouldContain($"a.pptx ({slidePart}) nests XML elements more than");
+            .Message.ShouldContain($"'a.pptx' ({slidePart}) nests XML elements more than");
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public sealed class XmlNestingTests
 
         Should.Throw<UnreadableDocumentException>(
                 () => Extract(new EpubTextExtractor(), TestEpubs.WithAChapter("<p>kept</p>", 20_000, "toc.txt"), "book.epub"))
-            .Message.ShouldContain("book.epub (toc.txt) nests XML elements more than");
+            .Message.ShouldContain("'book.epub' (toc.txt) nests XML elements more than");
     }
 
     public static TheoryData<string> Encodings() => new() { "utf-8-bom", "utf-16le-bom", "utf-16be-bom", "utf-16le" };
@@ -266,7 +266,7 @@ public sealed class XmlNestingTests
         var thrown = Should.Throw<UnreadableDocumentException>(
             () => XmlNesting.RequireShallowParts(new MemoryStream(bomb), "a.docx", budgetBytes: 1024 * 1024));
 
-        thrown.Message.ShouldBe("a.docx holds XML that inflates to more than 1 MiB, which is too much to read.");
+        thrown.Message.ShouldBe("'a.docx' holds XML that decompresses to more than 1 MiB, which is over the limit.");
     }
 
     [Fact]
@@ -291,7 +291,7 @@ public sealed class XmlNestingTests
         var clock = Stopwatch.StartNew();
 
         Should.Throw<UnreadableDocumentException>(() => Extract(new EpubTextExtractor(), bomb, "book.epub"))
-            .Message.ShouldContain("inflates to more than 256 MiB");
+            .Message.ShouldContain("decompresses to more than 256 MiB");
 
         clock.Elapsed.ShouldBeLessThan(Margin);
     }
@@ -337,6 +337,6 @@ public sealed class XmlNestingTests
         thrown.Message.ShouldNotContain("\n");
         thrown.Message.ShouldNotContain("\r");
         thrown.Message.ShouldContain("…");
-        thrown.Message.ShouldStartWith("a\ufffd\ufffdb.docx (");
+        thrown.Message.ShouldStartWith("'a\ufffd\ufffdb.docx' (");
     }
 }

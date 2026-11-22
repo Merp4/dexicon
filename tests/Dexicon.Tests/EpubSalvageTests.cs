@@ -151,7 +151,8 @@ public class EpubSalvageTests
         var failure = Should.Throw<ExtractionFailedException>(
             () => new EpubTextExtractor().Extract(epub, "drm.epub"));
 
-        failure.Message.ShouldContain("DRM");
+        failure.Message.ShouldBe(
+            "'drm.epub' is encrypted, usually by DRM, so its text cannot be read. If it has DRM, use a copy without it.");
     }
 
     [Fact]

@@ -374,8 +374,9 @@ public sealed class DocumentService(
                 var raw = await File.ReadAllBytesAsync(path, ct);
                 if (!keepOnUnexpected && Utf16Bom(raw) is null && Indexing.WorkspaceWalker.LooksBinary(raw))
                     throw new UnreadableDocumentException(
-                        $"'{fileName}' is binary (a NUL byte in its first {Indexing.WorkspaceWalker.BinarySniffBytes:N0} bytes). "
-                        + "Text files and PDF, DOCX, PPTX, EPUB and HTML documents can be read.");
+                        $"'{fileName}' is a binary file, so it cannot be read as text. Text files and PDF, DOCX, "
+                        + "PPTX, EPUB and HTML documents can be read. "
+                        + $"(It has a NUL byte in its first {Indexing.WorkspaceWalker.BinarySniffBytes:N0} bytes.)");
                 extracted = new ExtractedText(DecodeText(raw), []);
             }
             else
@@ -410,7 +411,7 @@ public sealed class DocumentService(
             var emptyReason = extracted.Text.Trim().Length > 0
                 ? null
                 : extractor is PdfTextExtractor
-                    ? "no text layer: this is a scanned PDF, and OCR is not supported"
+                    ? "no text layer (probably a scanned PDF), and OCR is not supported"
                     : "no extractable text content";
 
             return new BlobText
@@ -450,12 +451,13 @@ public sealed class DocumentService(
         // propagates.
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            throw new ExtractionFailedException($"'{fileName}' could not be read: {ex.Message}", ex);
+            throw new ExtractionFailedException(
+                $"'{fileName}' could not be read." + ExtractionFailures.Detail("cause", ex.Message), ex);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var failure = ex as ExtractionFailedException
-                ?? ExtractionFailures.Of($"'{fileName}' could not be read: {ex.Message}", ex);
+                ?? ExtractionFailures.Of($"'{fileName}' could not be read.", null, "cause", ex);
             if (failure is not UnreadableDocumentException { } verdict
                 || (keepOnUnexpected && verdict.Unexpected))
             {

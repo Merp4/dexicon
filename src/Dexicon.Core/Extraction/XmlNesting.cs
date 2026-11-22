@@ -80,7 +80,7 @@ internal static class XmlNesting
                     // An entry that is not XML fails at its first read, having been charged for the buffer
                     // that was read, and is given the charge back: a package of tens of thousands of images
                     // is not a package of XML.
-                    if (!RequireShallow(part, $"{Shown(fileName)} ({Shown(entry.FullName)})")) meter.Refund(meter.Used - before);
+                    if (!RequireShallow(part, $"'{Shown(fileName)}' ({Shown(entry.FullName)})")) meter.Refund(meter.Used - before);
                 }
                 catch (InvalidDataException)
                 {
@@ -132,7 +132,7 @@ internal static class XmlNesting
                 started = true;
                 if (reader.NodeType == XmlNodeType.Element && reader.Depth >= MaxDepth)
                     throw new UnreadableDocumentException(
-                        $"{what} nests XML elements more than {MaxDepth} deep, which is too deep to read.");
+                        $"{what} nests XML elements more than {MaxDepth} levels deep, which is over the limit.");
             }
         }
         catch (XmlException)
@@ -159,7 +159,7 @@ internal static class XmlNesting
             _used += bytes;
             if (_used > budgetBytes)
                 throw new UnreadableDocumentException(
-                    $"{Shown(fileName)} holds XML that inflates to more than {budgetBytes / (1024 * 1024):N0} MiB, which is too much to read.");
+                    $"'{Shown(fileName)}' holds XML that decompresses to more than {budgetBytes / (1024 * 1024):N0} MiB, which is over the limit.");
         }
     }
 

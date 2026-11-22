@@ -398,17 +398,17 @@ public static class DocumentEndpoints
         $"{UploadOptions.MaxSections} were processed and the rest were not. Send the files in another request.";
 
     private const string NoRecordSentence =
-        "No document record was created, and sending the file again extracts it again.";
+        "No document was stored, so uploading the file again reads it again.";
 
     /// <summary>Does not name the file: it is listed beside it, and the message reaches whoever sent it.</summary>
     private static string ExtractionTimedOutMessage(int seconds) =>
-        $"Extraction did not finish within {seconds} s (DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS). " +
+        $"Reading the file took longer than the {seconds} s limit (DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS). " +
         NoRecordSentence;
 
     /// <summary>Not the exception's message, which can name a path on the server.</summary>
     private const string ExtractionFailedMessage =
-        "Extraction failed on the server, from an I/O error, a refused permission, a shortage of memory or a "
-        + "timeout inside the extractor; the log has the cause. " + NoRecordSentence;
+        "The server could not read the file because of an I/O error, a refused permission, a shortage of memory "
+        + "or a timeout inside the reader. The server log has the cause. " + NoRecordSentence;
 
     private static IResult TooLarge(UploadOptions upload) =>
         Results.Problem(title: "Upload too large", detail: TooLargeMessage(upload), statusCode: 413);

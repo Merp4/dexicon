@@ -597,7 +597,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         var stored = await documents.StoreAsync(new MemoryStream(TestEpubs.WithADamagedEntry()), "broken.epub", TestContext.Current.CancellationToken);
 
-        stored.EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
+        stored.EmptyReason.ShouldNotBeNull().ShouldContain("could not be read as an EPUB");
         (await db.BlobTexts.SingleAsync(cancellationToken: TestContext.Current.CancellationToken)).Extractor.ShouldBe(nameof(EpubTextExtractor));
     }
 
@@ -618,7 +618,7 @@ public sealed class DocumentExtractionTimeoutTests
         await using var db = harness.NewContext();
         var returned = await ServiceWith(harness, db, null, registry: ExtractorRegistry.For).CurrentTextFor(sha, "broken.epub", ct: TestContext.Current.CancellationToken);
 
-        returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("not a readable .epub");
+        returned.ShouldNotBeNull().EmptyReason.ShouldNotBeNull().ShouldContain("could not be read as an EPUB");
         returned.ExtractorVersion.ShouldBe(ExtractorVersions.Current);
     }
 
@@ -691,7 +691,7 @@ public sealed class DocumentExtractionTimeoutTests
 
         var thrown = Should.Throw<UnreadableDocumentException>(() => new EpubTextExtractor().Extract(content, "broken.epub"));
 
-        thrown.Message.ShouldContain("not a readable .epub");
+        thrown.Message.ShouldContain("could not be read as an EPUB");
         thrown.GetBaseException().ShouldBeOfType<InvalidDataException>();
     }
 
@@ -716,7 +716,7 @@ public sealed class DocumentExtractionTimeoutTests
         var thrown = Should.Throw<ExtractionFailedException>(() => new HtmlTextExtractor().Extract(new FaultyStream(), "page.html"));
 
         thrown.ShouldNotBeOfType<UnreadableDocumentException>();
-        thrown.Message.ShouldStartWith("'page.html' is not a readable HTML document: ");
+        thrown.Message.ShouldBe("'page.html' could not be read as HTML. (HTML parser: disk fault)");
         thrown.InnerException.ShouldBeOfType<IOException>();
     }
 
