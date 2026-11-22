@@ -424,9 +424,9 @@ public sealed class DocumentUploadEndpointTests
         var failure = accepted.Failed.ShouldHaveSingleItem();
         failure.File.ShouldBe("stuck.slow");
         failure.Error.ShouldContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS");
-        failure.Error.ShouldContain("within 1 s");
-        failure.Error.ShouldContain("No document record was created");
-        failure.Error.ShouldContain("sending the file again extracts it again");
+        failure.Error.ShouldContain("longer than the 1 s limit");
+        failure.Error.ShouldContain("No document was stored");
+        failure.Error.ShouldContain("uploading the file again reads it again");
         failure.Error.ShouldNotContain("stuck.slow", Case.Sensitive);
         slow.BytesRead.ShouldBeLessThan(300, "the deadline has to cut the extractor's reading short");
         await using var db = harness.NewContext();
@@ -501,7 +501,7 @@ public sealed class DocumentUploadEndpointTests
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
         var failure = accepted.Failed.ShouldHaveSingleItem();
         failure.File.ShouldBe("flaky.flaky");
-        failure.Error.ShouldContain("No document record was created");
+        failure.Error.ShouldContain("No document was stored");
         failure.Error.ShouldNotContain("/data/blobs", Case.Sensitive);
         failure.Error.ShouldNotContain("DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS", Case.Sensitive);
         await using var db = harness.NewContext();
@@ -524,7 +524,7 @@ public sealed class DocumentUploadEndpointTests
         var refused = posted.Result.ShouldBeOfType<ProblemHttpResult>();
         refused.StatusCode.ShouldBe(503, "one file failed for a reason on the server, so retrying can succeed");
         refused.ProblemDetails.Detail.ShouldNotBeNull().ShouldContain("empty.txt");
-        refused.ProblemDetails.Detail.ShouldContain("No document record was created");
+        refused.ProblemDetails.Detail.ShouldContain("No document was stored");
     }
 
     [Fact]
@@ -556,7 +556,7 @@ public sealed class DocumentUploadEndpointTests
         accepted.Failed.ShouldBeEmpty();
         var broken = accepted.Stored[1];
         broken.ExtractedChars.ShouldBe(0);
-        broken.Warning.ShouldNotBeNull().ShouldContain("not a readable .epub");
+        broken.Warning.ShouldNotBeNull().ShouldContain("could not be read as an EPUB");
     }
 
     [Fact]
@@ -584,7 +584,7 @@ public sealed class DocumentUploadEndpointTests
         accepted.Stored.Select(s => s.FileName).ShouldBe(["before.txt", "after.txt"]);
         var failure = accepted.Failed.ShouldHaveSingleItem();
         failure.File.ShouldBe("gone.txt");
-        failure.Error.ShouldContain("No document record was created");
+        failure.Error.ShouldContain("No document was stored");
         await using var db = harness.NewContext();
         (await db.Blobs.CountAsync(cancellationToken: TestContext.Current.CancellationToken)).ShouldBe(2);
     }

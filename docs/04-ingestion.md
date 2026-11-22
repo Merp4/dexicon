@@ -440,6 +440,14 @@ extraction of one file is abandoned after `DEXICON__INDEXING__EXTRACTIONTIMEOUTS
 (300 s). The clock is read between reads of the file, so it bounds a file that keeps
 reading and not a single read that never returns ([09](09-deployment.md)).
 
+A PDF is checked for its trailer before it is parsed: its last 4,096 bytes must hold both
+`startxref` and `%%EOF`. A PDF without them, usually a download cut short, has no usable
+cross-reference table, and PdfPig rebuilds one by scanning the file backwards a byte at a
+time, which can take hours on a large file. Such a file is refused unparsed with a message that
+says it is incomplete or damaged. A file that passes the check and is still slow to read, such as
+one whose cross-reference table is broken or whose HTML is nested very deeply, is stopped by the
+extraction timeout.
+
 ### `upload` — files pushed through the UI or API
 
 Bytes are content-addressed into `/data/blobs/<sha256[0:2]>/<sha256>` and recorded in

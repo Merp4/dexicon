@@ -126,7 +126,8 @@ public sealed class ExtractionDeadlineTests
 
         var ex = Should.Throw<ExtractionTimeoutException>(() => extractor.Extract(stream, name));
 
-        ex.Message.ShouldNotContain("not a readable");
+        ex.Message.ShouldNotContain("could not be read as");
+        ex.Message.ShouldStartWith($"Reading '{name}' was stopped after");
         ex.Message.ShouldContain(name);
     }
 

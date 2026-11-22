@@ -65,9 +65,9 @@ public sealed class DeadlineStream(Stream inner, TimeSpan budget, string fileNam
     }
 
     private ExtractionTimeoutException Timeout(Exception? cause) =>
-        new($"'{fileName}' was still being read after {budget.TotalSeconds:N0}s and was "
-            + "abandoned. A document this slow is usually structurally broken or nested very deeply: "
-            + "a PDF with no cross-reference table, for one, is searched byte by byte.", cause);
+        new($"Reading '{fileName}' was stopped after {budget.TotalSeconds:N0} s, the time limit for one file "
+            + "(DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS). A file this slow to read is usually damaged or "
+            + "very deeply nested.", cause);
 
     public override int Read(byte[] buffer, int offset, int count)
     {

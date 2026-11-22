@@ -146,4 +146,14 @@ public sealed class ExtractionFailureClassificationTests
         Classify(new InvalidOperationException("wrapper", new UnreadableDocumentException("not a readable .docx")))
             .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeFalse();
     }
+
+    [Theory]
+    [InlineData("Invalid header.", " (PDF reader: Invalid header)")]
+    [InlineData("Invalid header", " (PDF reader: Invalid header)")]
+    [InlineData("  Ends in spaces . ", " (PDF reader: Ends in spaces)")]
+    [InlineData("", "")]
+    [InlineData(" . ", "")]
+    [InlineData(null, "")]
+    public void TheLibraryMessageIsLabelledAndLosesItsFullStop(string? message, string expected) =>
+        ExtractionFailures.Detail("PDF reader", message).ShouldBe(expected);
 }

@@ -478,7 +478,8 @@ public sealed class DocumentLibraryTests : IAsyncLifetime
         var stored = await _documents.StoreAsync(new MemoryStream(png), "image.png", TestContext.Current.CancellationToken);
 
         stored.ExtractedChars.ShouldBe(0);
-        stored.EmptyReason.ShouldNotBeNull().ShouldStartWith("'image.png' is binary (a NUL byte in its first 8,192 bytes).");
+        stored.EmptyReason.ShouldNotBeNull().ShouldBe("'image.png' is a binary file, so it cannot be read as text. Text files and PDF, DOCX, PPTX, EPUB "
+            + "and HTML documents can be read. (It has a NUL byte in its first 8,192 bytes.)");
     }
 
     [Fact]
