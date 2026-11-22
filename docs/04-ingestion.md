@@ -582,7 +582,7 @@ document was deleted while it waited to be attached ... Upload it again."
 
 The request as a whole is bounded at ten files at the cap plus 1 MiB of multipart framing,
 which is 2,098,200,576 bytes at the default and follows `DEXICON__UPLOAD__MAXFILEBYTES`.
-The web UI sends a drop of more than ten files as several requests of at most ten, one after
+The web UI sends an upload of more than ten files as several requests of at most ten, one after
 another, so the bound allows a full request. A larger body is refused with `413` and a message
 that names the bound, before any of it is read when the client declares its `Content-Length`,
 and otherwise when the body reaches the bound. Files stored before the bound was reached stay
@@ -598,8 +598,8 @@ limit are in neither `stored` nor `failed`. The files before it stay stored and 
 none of them was stored the answer is `400`: "No files could be stored" when a file part was
 reached, with the failures as its detail (`503` instead when one of the failures is an extraction
 that timed out or failed on the server, because the caller did nothing wrong and sending the file
-again can succeed; the web UI ends a multi-request drop at a 5xx and lists the files not yet sent
-as `Not sent`), and "No files in the request" when only form fields were read, with the
+again can succeed; the web UI ends a multi-request upload at a 5xx, a 401, a 403 or a network failure, continues
+after any other 4xx, and lists the files not yet sent as `Not sent: an earlier request failed.`), and "No files in the request" when only form fields were read, with the
 request-level text as its detail when the section limit was hit and no detail otherwise.
 
 A probe against Kestrel with the body-size limit unset, as the endpoint sets it, found that the
@@ -636,10 +636,10 @@ encrypted or corrupt file, is stored with its message as the document's empty re
 
 Because no row records a timeout, a file that times out every time does so for the full budget on
 every upload of it, and the response carries no `Retry-After`. A request that stored nothing, where at least
-one file failed for such a reason, answers `503`. In the web UI a drop of more than ten files is sent as several
-requests, and a request that answers `503` ends the drop: the files not yet sent are listed as
+one file failed for such a reason, answers `503`. In the web UI an upload of more than ten files is sent as several
+requests, and a request that answers `503` ends the upload: the files not yet sent are listed as
 `Not sent`. That is intended. A server that cannot extract is not helped by more uploads, and
-dropping the rest again is the retry.
+uploading the rest again is the retry.
 
 A `blob_texts` row that an earlier version wrote for an I/O error, a refused permission, a shortage
 of memory, a `TimeoutException`, or an extraction failure that wraps one of those keeps that message
@@ -684,8 +684,8 @@ handled like an overrun of the byte bound: files completed before it stay stored
 the response lists the cause under `failed` with a `null` `file`, and when nothing was stored the answer is
 `400` "Malformed multipart upload". A client that disconnects after some files were stored is handled
 the same way: those files are attached and indexed, and the file being attached at that moment is
-discarded rather than saved without being reported. The Documents screen names each file in
-`failed` under the count it stored.
+discarded rather than saved without being reported. The Documents screen lists each file in
+`failed` under "N files not stored".
 
 The blob store writes each file to a temp file under `/data/blobs` before the hash is
 known, because the hash is only known once the whole stream is read and a 200 MB upload

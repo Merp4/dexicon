@@ -69,7 +69,8 @@ public sealed record ChunkOptions
 }
 
 /// <summary>
-/// Line-accumulating chunker. Never splits a line, so every chunk carries an exact
+/// Line-accumulating chunker. Splits a line only when it is longer than the whole budget
+/// (every piece keeps that line's number), so every chunk carries an exact
 /// <c>start_line</c>/<c>end_line</c> and a result is directly openable in an editor.
 ///
 /// With <c>language-aware</c> the accumulator fills to the budget and then backs up to
