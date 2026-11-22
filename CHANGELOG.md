@@ -16,6 +16,68 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.8.0 — 2026-11-22
+
+### ⚠️ Upgrading
+
+- **The catalogue gains a `search_log` table.** The migration `20261120141807_SearchesAreRecorded` runs at the first start and adds the table and its indexes; no existing row
+  changes. Rolling back to 0.7.2 leaves the table in place, and 0.7.2 does not read it.
+- **Searches are recorded by default, with their text, for 30 days** ([D-52](docs/decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)).
+  Each search that ran, including one with no hits, writes one row: the key, the interface (MCP tool, API or context hook), the corpora and the query, each cut at 500
+  characters, the mode, the hit count, the top score and the time taken. A search refused for an unknown corpus or an empty scope writes none. A row is dropped, and
+  counted, when the write queue (1,000 rows) is full or the catalogue refuses it twice. With the defaults the catalogue and its backups hold query text, including each prompt the per-prompt context hook sends, for 30
+  days. `DEXICON_SEARCHLOG_ENABLED=false` records nothing, `DEXICON_SEARCHLOG_STOREQUERYTEXT=false` keeps the length and drops the text, and
+  `DEXICON_SEARCHLOG_RETENTIONDAYS` sets the days kept (0 or fewer keeps every row). The variables are in `.env.example` and `docker-compose.yml`.
+- **An upload with no document format and binary content is stored with no text.** A file other than PDF, DOCX, PPTX, EPUB and HTML whose first 8 KB hold a NUL byte, and
+  that has no UTF-16 byte order mark, is stored with the reason and indexes nothing; until 0.7.2 it was decoded as text. A document stored earlier keeps its text: the test
+  applies when an upload is first extracted. UTF-16 text with a byte order mark is now decoded as UTF-16 (it was read as Latin-1).
+- **No chunker or extractor version changed**, so nothing is read or embedded again. The skill is unchanged (`dexicon-skill-version: 10`), and the hooks behave as
+  before (one comment in `dexicon-context.py` was reworded).
+
+### Added
+
+- **Search history (D-52, #355).** The searches recorded above, newest first, under Activity → Search history and at `GET /api/searches` (admin only). They can be
+  filtered by key and corpus (part of the name, ignoring case), by interface, and to those with no results.
+- **Configuration download (D-53, #356).** Settings → Download configuration, or `GET /api/config/export` (admin only), returns the corpora, their sources, filters and chunk
+  sets, the model profiles and the keys (by name, scopes and reach, without secrets) as one JSON file.
+- **Configuration import (D-54, #357).** Settings → Import configuration, or `POST /api/config/import` (admin only), reads such a file. A check changes nothing and lists what
+  applying would do. Applying adds the corpora and sources that are missing and updates the filters of those that are there. It deletes no corpus, source or chunk set; a
+  narrower filter removes the files it excludes at the next refresh. Chunk sets other than a new corpus's default, keys and model profiles are listed as not imported.
+
+### Changed
+
+- **Navigation (#358).** Jobs and Search history are tabs of Activity; Models is a tab of Settings.
+- **Documents (#361).** Dropped or chosen files wait in a list, with Remove and Clear, beside the corpus they go into (the last one used, or the only one), and upload
+  when Upload is pressed. The list shows how each chunk set of that corpus will chunk them.
+- **Plainer text in the web UI (#362, #364, #365).** About 65 strings in #362, and more in #364 and #365, were rewritten as statements of state and action. Among them: a refresh's job card counts "unchanged
+  or skipped" files, a model with no measured limit reads "no limit found up to the largest size tested", and the text viewer names the format it read.
+- **Uploads (#365).** The upload result says when two names had the same content and which name the corpus keeps; a document's row shows the corpus's name for it when it
+  differs. Attach to another corpus no longer preselects the first of several corpora, and Detach names the corpora that keep the document. An encrypted PDF says it is
+  encrypted.
+
+### Fixed
+
+- **Loading states (#360).** Search, Corpora, Documents, Jobs and Access show "Loading…" until their data arrives, where they showed "no corpora" or an empty list.
+- **No Entity Framework warning at the first refresh after a start (#353).** The query that loads a corpus with its sources and chunk sets runs as split queries.
+
+### Verified against 0.7.2
+
+On the code of this release (`cec9a33`; the release commit changes only this file and the release state in docs/11 and docs/decisions.md) unless a line says otherwise.
+
+- **Upgrade rehearsal** on a copy of the live catalogue of 2026-11-15 (taken at the 0.7.2 deploy), with the image built for `cec9a33`: the start added one migration
+  (`20261120141807_SearchesAreRecorded`, 25 to 26), integrity `ok` and 0 foreign-key violations after; 166 checks passed and none failed (the API smoke, the detach smoke,
+  the blob-root evidence across a restart). An empty-body and null-body sweep of every JSON operation answered no `5xx`. The same run on the 0.7.2 image gave the same three
+  error classes in the app log; the warnings matched apart from Entity Framework's split-query warning, which 0.8.0 no longer logs.
+- **Dogfooding.** The live instance ran builds of `main` from `9ff3b95` to `cec9a33` from 2026-11-21, with the migration applied, real MCP and context-hook traffic recorded
+  in the search log, and each screen walked signed in. An import was checked and applied, and a batch of 13 synthetic files covering every format and the unreadable cases
+  was uploaded, attached, searched and detached; what that found is #360, #361, #364 and #365.
+- **Tests.** CI's build and test job (the .NET suite, the web UI tests and the typecheck) passed on `cec9a33`. Locally, on a commit of #365 before its UTF-16 and
+  re-read change, the .NET suite passed 3,907 tests and skipped 11 and the web UI passed 597 tests.
+- **Rollback.** The 0.7.2 image, started on the catalogue the rehearsal had upgraded, answered `/healthz/ready` with `ready`; the catalogue still held 26 migrations and
+  the `search_log` table, and its integrity check was `ok`.
+- **Not run:** the MCP request probe (the tools' schemas are unchanged; each search now records its interface) and the embedding probe (no embedding or chunking code
+  changed).
+
 ## 0.7.2 — 2026-11-15
 
 ### ⚠️ Upgrading

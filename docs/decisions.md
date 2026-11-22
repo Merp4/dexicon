@@ -3034,7 +3034,7 @@ reader's output loses messages, which the sniff would not report.
 
 ### D-52 Every search that ran is recorded, and an administrator can read the record
 
-**Status.** Accepted and implemented, 2026-11-20 (#355). Not yet released.
+**Status.** Accepted and implemented, 2026-11-20 (#355). Released in 0.8.0.
 
 **Decision.** `SearchService.SearchAsync` writes one row to a `search_log` table for each search that returns a result: the
 key, the surface the search came in by (`mcp`, `api` or `context`), the corpora, the mode that ran, the query, the number of
@@ -3084,7 +3084,7 @@ searches.
 
 ### D-53 The configuration can be downloaded as a file
 
-**Status.** Accepted and implemented, 2026-11-20 (#356). Not yet released.
+**Status.** Accepted and implemented, 2026-11-20 (#356). Released in 0.8.0.
 
 **Decision.** `GET /api/config/export` (admin only) returns the configuration as one JSON document, and the Settings screen
 downloads it. The document has `format` (`dexicon-config`), `version` (1), `exportedUtc`, `dexiconVersion` and four lists:
@@ -3133,7 +3133,7 @@ The file is read by the import ([D-54](decisions.md#d-54-a-configuration-file-ca
 
 ### D-54 A configuration file can be read into an instance without deleting a corpus, source or chunk set
 
-**Status.** Accepted and implemented, 2026-11-20. Not yet released.
+**Status.** Accepted and implemented, 2026-11-20 (#357). Released in 0.8.0.
 
 **Decision.** `POST /api/config/import` (admin only) takes a configuration file ([D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file))
 as its body. Without `apply=true` it is a dry run that changes nothing, and with it the file is applied. Both answer with the
