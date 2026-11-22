@@ -77,7 +77,7 @@ export function ConfigUpload() {
         Read a configuration file into this instance. Checking it changes nothing and lists what applying would do. Applying adds
         the corpora and sources that are missing and updates the filters of those that are there. It deletes no corpus, source or
         chunk set, but a narrower filter removes the files it excludes from the index at the refresh. Chunk sets other than a
-        new corpus's default, keys and model profiles in the file are not imported, and each is listed as not imported.
+        new corpus's default, keys and model profiles in the file are listed as not imported.
       </p>
 
       <input

@@ -210,7 +210,7 @@ function FileFilterFields({ value, onChange, fallback, documentMaxBytes }: {
         label="Size limit (MB)"
         hint={
           <>
-            For code and text files. Larger files are skipped and listed as skipped. PDF, DOCX, PPTX, EPUB, HTML and Claude
+            For code and text files. Larger files are skipped, and the skipped filter on the corpus page lists them with the reason. PDF, DOCX, PPTX, EPUB, HTML and Claude
             Code transcript files use a separate limit{documentMaxBytes ? ` (${formatBytes(documentMaxBytes)})` : ''} set
             by the server.
           </>

@@ -236,7 +236,7 @@ export function GitRefPicker({
       )}
 
       {mode === 'other' && (
-        <Field label="Ref" hint="A branch, tag or commit, as git names it. A ref that does not exist is reported on the corpus page after the refresh.">
+        <Field label="Ref" hint="A branch, tag or commit, as git names it. A ref that does not exist makes the source unavailable at the next refresh, with git's reason on the corpus page.">
           <Input className="mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="HEAD" />
         </Field>
       )}
