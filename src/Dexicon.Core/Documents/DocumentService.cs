@@ -365,8 +365,14 @@ public sealed class DocumentService(
             ExtractedText extracted;
             if (extractor is null)
             {
-                // Not a document format: treat as plain text, the same as a code file.
+                // Not a document format: treat as plain text, the same as a code file, and refuse binary
+                // content by the walker's test. Decoded, an image or archive became a few dozen characters
+                // of noise that was chunked, embedded and matched keyword searches.
                 var raw = await File.ReadAllBytesAsync(path, ct);
+                if (Indexing.WorkspaceWalker.LooksBinary(raw))
+                    throw new UnreadableDocumentException(
+                        $"'{fileName}' is binary (a NUL byte in its first {Indexing.WorkspaceWalker.BinarySniffBytes:N0} bytes). "
+                        + "Text files and PDF, DOCX, PPTX, EPUB and HTML documents can be read.");
                 extracted = new ExtractedText(DecodeText(raw), []);
             }
             else

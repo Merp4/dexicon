@@ -1024,17 +1024,25 @@ public sealed class WorkspaceWalker
                 : $"has {count:N0} lines with bytes that are not valid in the file's encoding; those lines were skipped").Message);
     }
 
+    /// <summary>How much of the start of a file <see cref="LooksBinary(ReadOnlySpan{byte})"/> reads.</summary>
+    internal const int BinarySniffBytes = 8192;
+
     internal static bool LooksBinary(string path)
     {
         try
         {
             using var fs = File.OpenRead(path);
-            Span<byte> buf = stackalloc byte[8192];
+            Span<byte> buf = stackalloc byte[BinarySniffBytes];
             var n = fs.Read(buf);
-            for (var i = 0; i < n; i++)
-                if (buf[i] == 0) return true;
-            return false;
+            return LooksBinary(buf[..n]);
         }
         catch { return true; }
     }
+
+    /// <summary>
+    /// A NUL byte in the first <see cref="BinarySniffBytes"/> bytes. The walker skips such a file, and an upload
+    /// with no document extractor is refused by the same test (DocumentService.ExtractAsync).
+    /// </summary>
+    internal static bool LooksBinary(ReadOnlySpan<byte> bytes) =>
+        bytes[..Math.Min(bytes.Length, BinarySniffBytes)].IndexOf((byte)0) >= 0;
 }

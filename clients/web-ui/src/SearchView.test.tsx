@@ -78,6 +78,16 @@ beforeEach(() => {
 });
 
 describe('searching', () => {
+  it('drops the invitation to search while the first search runs', async () => {
+    // A search over every corpus took 9 s on the running app, and the placeholder cards sat above
+    // "Search your indexed content" for all of it.
+    search.mockReturnValue(new Promise(() => {}));
+    await searchFor('chunk sets');
+
+    await waitFor(() => expect(search).toHaveBeenCalled());
+    expect(screen.queryByText('Search your indexed content')).not.toBeInTheDocument();
+  });
+
   it('shows where a hit is, not just what it says', async () => {
     // `file:line-line` is what gets pasted back into a conversation or an editor.
     await searchFor('chunk sets');

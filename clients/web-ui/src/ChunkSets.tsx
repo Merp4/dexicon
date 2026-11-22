@@ -221,7 +221,7 @@ export function ChunkSetsPanel({
                 <div className="dim text-xs mt-1">
                   {set.fileCount.toLocaleString()} {unitFor(corpus.sources, set.fileCount)} · {count(set.chunkCount, 'chunk')} ·{' '}
                   <span title={set.lastIndexedUtc ? localTime(set.lastIndexedUtc) : undefined}>
-                    {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'never indexed'}
+                    {set.lastIndexedUtc ? `indexed ${relativeTime(set.lastIndexedUtc)}` : 'not indexed yet'}
                   </span>
                 </div>
               </div>
