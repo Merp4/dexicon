@@ -140,7 +140,19 @@ internal static class ExtractionFailures
     /// read as corrupt for one pass; the file then stays settled as failed until it changes,
     /// or a full pass reads it again.
     /// </summary>
-    public static ExtractionFailedException Of(string message, Exception cause)
+    public static ExtractionFailedException Of(string message, Exception cause) => Of(message, null, null, cause);
+
+    /// <summary>
+    /// <see cref="Of(string, Exception)"/>, with the message built here: the problem, then the advice, then the
+    /// library's own message labelled with <paramref name="source"/> (<see cref="Detail"/>). The advice is left
+    /// out when the failure is not a verdict on the file, because an I/O error or a timeout on a good file is not
+    /// fixed by downloading or saving it again.
+    /// </summary>
+    /// <param name="problem">What is wrong, as a sentence: "'a.docx' could not be read as a Word document."</param>
+    /// <param name="advice">What to do about a damaged file, as one or more sentences, or null.</param>
+    /// <param name="source">What reported <paramref name="cause"/>, such as "DOCX reader", or null for no detail.</param>
+    /// <param name="cause">The exception that was caught.</param>
+    public static ExtractionFailedException Of(string problem, string? advice, string? source, Exception cause)
     {
         bool timeout = false, verdict = false, environmental = false;
         foreach (var member in Members(cause))
@@ -165,9 +177,11 @@ internal static class ExtractionFailures
             }
         }
 
+        var detail = source is null ? "" : Detail(source, cause.Message);
         if (timeout || (environmental && !verdict))
-            return new ExtractionFailedException(message, cause);
+            return new ExtractionFailedException(problem + detail, cause);
 
+        var message = advice is null ? problem + detail : $"{problem} {advice}{detail}";
         return new UnreadableDocumentException(message, cause) { Unexpected = !verdict && IsFault(cause) };
     }
 
@@ -412,8 +426,8 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         {
             buffered?.Dispose();
             throw ExtractionFailures.Of(
-                $"'{fileName}' could not be opened as a PDF. It may be damaged or encrypted. "
-                + "Try downloading or exporting it again." + ExtractionFailures.Detail("PDF reader", ex.Message), ex);
+                $"'{fileName}' could not be opened as a PDF.",
+                "It may be damaged or encrypted. Try downloading or exporting it again.", "PDF reader", ex);
         }
 
         try
@@ -442,8 +456,8 @@ public sealed partial class PdfTextExtractor : ITextExtractor
             // or the mount that failed is decided by the cause. Output for a file that
             // extracts is unchanged, so ExtractorVersions.Current is not bumped.
             throw ExtractionFailures.Of(
-                $"'{fileName}' opened as a PDF, but its pages could not be read. It may be damaged. "
-                + "Try downloading or exporting it again." + ExtractionFailures.Detail("PDF reader", ex.Message), ex);
+                $"'{fileName}' opened as a PDF, but its pages could not be read.",
+                "It may be damaged. Try downloading or exporting it again.", "PDF reader", ex);
         }
         finally
         {
@@ -503,9 +517,9 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         if (span.IndexOf("%%EOF"u8) >= 0 && span.IndexOf("startxref"u8) >= 0) return;
 
         throw new UnreadableDocumentException(
-            $"'{fileName}' is incomplete or damaged: the end of the PDF is missing, which usually means the "
-            + "download was cut short. Download it again. "
-            + $"(Not parsed: the last {take:N0} of its {length:N0} bytes hold no startxref and %%EOF.)");
+            $"'{fileName}' is incomplete or damaged: the end of the PDF is missing, which usually means a "
+            + "download or copy was cut short. Download or copy it again. "
+            + $"(Not parsed: the last {take:N0} of its {length:N0} bytes do not hold both startxref and %%EOF.)");
     }
 
     /// <summary>
@@ -612,8 +626,8 @@ public sealed class DocxTextExtractor : ITextExtractor
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             throw ExtractionFailures.Of(
-                $"'{fileName}' could not be read as a Word document. It may be damaged or in another format. "
-                + "Open it and save it again as .docx." + ExtractionFailures.Detail("DOCX reader", ex.Message), ex);
+                $"'{fileName}' could not be read as a Word document.",
+                "It may be damaged or in another format. Open it and save it again as .docx.", "DOCX reader", ex);
         }
     }
 }
@@ -653,8 +667,8 @@ public sealed class PptxTextExtractor : ITextExtractor
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             throw ExtractionFailures.Of(
-                $"'{fileName}' could not be read as a PowerPoint presentation. It may be damaged or in another "
-                + "format. Open it and save it again as .pptx." + ExtractionFailures.Detail("PPTX reader", ex.Message), ex);
+                $"'{fileName}' could not be read as a PowerPoint presentation.",
+                "It may be damaged or in another format. Open it and save it again as .pptx.", "PPTX reader", ex);
         }
     }
 }
@@ -728,7 +742,7 @@ public sealed class EpubTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExt
         if (zip.Entries.Any(e => e.FullName.Equals("META-INF/encryption.xml", StringComparison.OrdinalIgnoreCase)))
             throw new UnreadableDocumentException(
                 $"'{fileName}' is encrypted, usually by DRM, so its text cannot be read. "
-                + "To index it, use a copy without DRM.", cause);
+                + "If it has DRM, use a copy without it.", cause);
 
         var documents = zip.Entries
             .Where(e => e.Name.Length > 0)
@@ -768,14 +782,14 @@ public sealed class EpubTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExt
             // a failed checksum) throws InvalidDataException from the entry stream, outside the
             // handler that wraps the other formats.
             throw ExtractionFailures.Of(
-                $"'{fileName}' could not be read as an EPUB. It may be damaged. Try downloading it again."
-                + ExtractionFailures.Detail("EPUB reader", ex.Message), ex);
+                $"'{fileName}' could not be read as an EPUB.",
+                "It may be damaged. Try downloading it again.", "EPUB reader", ex);
         }
 
         if (sb.Length == 0)
             throw new UnreadableDocumentException(
-                $"'{fileName}' could not be read as an EPUB: its manifest (the list of its contents) is unreadable, "
-                + "and the archive holds no XHTML pages to read without it. It may be damaged. Try downloading it again."
+                $"'{fileName}' could not be read as an EPUB. It may be damaged. Try downloading it again. Its "
+                + "manifest (the list of its contents) is unreadable, and the archive holds no XHTML pages with text."
                 + ExtractionFailures.Detail("EPUB reader", cause.Message), cause);
 
         return new ExtractedText(sb.ToString(), units);
@@ -824,8 +838,7 @@ public sealed class HtmlTextExtractor(int maxTags = HtmlText.MaxTags) : ITextExt
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             // An I/O error reading the file reaches the caller as a failure that is not a verdict on it.
-            throw ExtractionFailures.Of(
-                $"'{fileName}' could not be read as HTML." + ExtractionFailures.Detail("HTML parser", ex.Message), ex);
+            throw ExtractionFailures.Of($"'{fileName}' could not be read as HTML.", null, "HTML parser", ex);
         }
     }
 }

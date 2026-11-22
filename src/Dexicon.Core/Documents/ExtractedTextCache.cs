@@ -38,7 +38,7 @@ public sealed class ExtractedTextCache(
     /// </summary>
     public static string EmptyReason(ITextExtractor? extractor) =>
         extractor is PdfTextExtractor
-            ? "no text layer: this is a scanned PDF, and OCR is not supported"
+            ? "no text layer (probably a scanned PDF), and OCR is not supported"
             : "no extractable text content";
 
     /// <summary>Extraction units as stored, or none where the row predates them.</summary>

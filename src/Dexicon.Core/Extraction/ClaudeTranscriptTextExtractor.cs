@@ -125,8 +125,7 @@ public sealed class ClaudeTranscriptTextExtractor : IContentGatedExtractor
         catch (Exception ex) when (ex is not ExtractionFailedException)
         {
             throw ExtractionFailures.Of(
-                $"'{fileName}' could not be read as a Claude Code transcript."
-                + ExtractionFailures.Detail("transcript reader", ex.Message), ex);
+                $"'{fileName}' could not be read as a Claude Code transcript.", null, "transcript reader", ex);
         }
     }
 

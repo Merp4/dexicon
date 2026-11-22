@@ -51,8 +51,8 @@ public sealed class PdfUnreadableMessageTests
             new PdfTextExtractor().Extract(new MemoryStream(truncated), "corrupt.pdf"));
 
         ex.Message.ShouldBe(
-            "'corrupt.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means the download "
-            + "was cut short. Download it again. "
-            + $"(Not parsed: the last {truncated.Length} of its {truncated.Length} bytes hold no startxref and %%EOF.)");
+            "'corrupt.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means a download "
+            + "or copy was cut short. Download or copy it again. "
+            + $"(Not parsed: the last {truncated.Length} of its {truncated.Length} bytes do not hold both startxref and %%EOF.)");
     }
 }

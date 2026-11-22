@@ -278,7 +278,7 @@ and what to change:
     files under docs: 16 files found; .gitignore respected; .dexiconignore respected; code and text up to 256 KB; not **/*.tmp (from the corpus defaults: not)
     commit history of the workspace root: 256 commits, follows refs/heads/main (52 behind origin/main as of the fetch at 2026-09-27 08:15 UTC); holds message, stat; newest 24664ac, 2026-09-26
   failed: 1
-    docs/papers/broken.pdf — 'broken.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means the download was cut short. Download it again. (Not parsed: the las...
+    docs/papers/broken.pdf — 'broken.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means a download or copy was cut short. Download or copy it again. (Not p...
   skipped: 2
     docs/assets/diagram.png — binary content (NUL byte in the first 8 KB)
     docs/data/export.json — over the 262,144 byte size cap (1,048,576 bytes)

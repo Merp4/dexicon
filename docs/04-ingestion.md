@@ -681,7 +681,7 @@ own bound.
 - **DOCX, PPTX and EPUB.** Every entry of the package is tried as XML by a streaming reader, whatever
   it is called, because a relationship or manifest can name a part anything. An entry that is not XML
   fails at the first read. A package with a part nested more than 512 deep is an unreadable document
-  ("nests XML elements more than 512 deep"). The XML of one package may inflate to at most 256 MiB,
+  ("nests XML elements more than 512 levels deep"). The XML of one package may inflate to at most 256 MiB,
   summed over the entries, and the reading is held to the extraction clock; past either it is an
   unreadable document or a timeout. A part that is not well formed, and bytes that are not a zip, are
   left to the reader that follows.
@@ -690,7 +690,7 @@ own bound.
   parse stops within about 50 ms of it: 100,000 nested divs with stray end tags took 319 s to parse
   unbounded, and stop at the budget. A deep document that parses within the budget is extracted. The
   text walk keeps an explicit stack. A document with more than 1,000,000 tags (counted as the
-  less-than signs) is an unreadable document ("contains more than 1,000,000 tags"), because the
+  less-than signs) is an unreadable document ("has more than 1,000,000 tags"), because the
   parser takes 290 to 560 bytes of memory per tag, 0.4 to 0.8 GB at the limit, and the clock alone
   let 100 MB of paragraphs reach 10 GB.
 - **PDF** is not bounded ([10](10-security-secrets.md#input-handling) says what that means).
@@ -1100,8 +1100,8 @@ See [D-34](decisions.md#d-34-a-commit-is-a-document).
 Every extractor returns an `ExtractedText`: the text, its unit markers (a page, slide or chapter number with the character
 offset it starts at), and optionally a title and named sections. Failures are per-file and recorded:
 
-- **PDF with no text layer** → `status: empty`, `status_detail: "no text layer: this is a
-  scanned PDF, and OCR is not supported"`, and the file is visible in the UI as
+- **PDF with no text layer** → `status: empty`, `status_detail: "no text layer (probably
+  a scanned PDF), and OCR is not supported"`, and the file is visible in the UI as
   ingested-but-empty. It is
   not reported as a success, and not absent without explanation.
 - **Encrypted / DRM** → `status: failed` with the reason.

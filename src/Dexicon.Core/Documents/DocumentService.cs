@@ -411,7 +411,7 @@ public sealed class DocumentService(
             var emptyReason = extracted.Text.Trim().Length > 0
                 ? null
                 : extractor is PdfTextExtractor
-                    ? "no text layer: this is a scanned PDF, and OCR is not supported"
+                    ? "no text layer (probably a scanned PDF), and OCR is not supported"
                     : "no extractable text content";
 
             return new BlobText
@@ -457,8 +457,7 @@ public sealed class DocumentService(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var failure = ex as ExtractionFailedException
-                ?? ExtractionFailures.Of(
-                    $"'{fileName}' could not be read." + ExtractionFailures.Detail("cause", ex.Message), ex);
+                ?? ExtractionFailures.Of($"'{fileName}' could not be read.", null, "cause", ex);
             if (failure is not UnreadableDocumentException { } verdict
                 || (keepOnUnexpected && verdict.Unexpected))
             {

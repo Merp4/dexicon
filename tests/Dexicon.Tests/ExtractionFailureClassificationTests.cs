@@ -147,6 +147,27 @@ public sealed class ExtractionFailureClassificationTests
             .ShouldBeOfType<UnreadableDocumentException>().Unexpected.ShouldBeFalse();
     }
 
+    [Fact]
+    public void TheAdviceIsGivenForAVerdictOnTheFile()
+    {
+        var failure = ExtractionFailures.Of("'a.docx' could not be read.", "Save it again.", "DOCX reader",
+            new InvalidDataException("Bad header."));
+
+        failure.ShouldBeOfType<UnreadableDocumentException>().Message
+            .ShouldBe("'a.docx' could not be read. Save it again. (DOCX reader: Bad header)");
+    }
+
+    [Fact]
+    public void TheAdviceIsLeftOutWhenTheFailureIsNotAVerdictOnTheFile()
+    {
+        // An I/O error on a mount says nothing about the bytes; saving the file again would not help.
+        var failure = ExtractionFailures.Of("'a.docx' could not be read.", "Save it again.", "DOCX reader",
+            new IOException("The device is not ready."));
+
+        failure.ShouldNotBeOfType<UnreadableDocumentException>();
+        failure.Message.ShouldBe("'a.docx' could not be read. (DOCX reader: The device is not ready)");
+    }
+
     [Theory]
     [InlineData("Invalid header.", " (PDF reader: Invalid header)")]
     [InlineData("Invalid header", " (PDF reader: Invalid header)")]
