@@ -609,7 +609,7 @@ settings, but the file can be read, diffed and edited, and it is not tied to one
 `POST /api/config/import` reads such a file into an instance ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set)). It adds corpora and sources that are missing and
 updates the filters and descriptions of those that are there. It deletes no corpus, source or chunk set, but a filter that is
 narrower than the one it replaces removes the files it now excludes from the index when the queued refresh runs. It reads one chunk set
-(a new corpus's default) and no key or model profile. The Settings screen has an **Import configuration** section that does the
+(for a new corpus, the file's default set, or the first by name when none is marked) and no key or model profile. The Settings screen has an **Import configuration** section that does the
 same, checking the file first. Without `apply=true` the endpoint only reports what it would do:
 
 ```bash

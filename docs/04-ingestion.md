@@ -598,7 +598,7 @@ limit are in neither `stored` nor `failed`. The files before it stay stored and 
 none of them was stored the answer is `400`: "No files could be stored" when a file part was
 reached, with the failures as its detail (`503` instead when one of the failures is an extraction
 that timed out or failed on the server, because the caller did nothing wrong and sending the file
-again can succeed; the web UI ends a multi-request upload at a 5xx, a 401, a 403 or a network failure, continues
+again can succeed; the web UI ends a multi-request upload at a 5xx, a 401, a 403, a network failure or an answer that is not an upload result, continues
 after any other 4xx, and lists the files not yet sent as `Not sent: an earlier request failed.`), and "No files in the request" when only form fields were read, with the
 request-level text as its detail when the section limit was hit and no detail otherwise.
 

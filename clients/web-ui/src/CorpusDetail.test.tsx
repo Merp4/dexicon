@@ -2638,9 +2638,9 @@ describe('the full reindex', () => {
       .toBeInTheDocument();
   });
 
-  it('mentions the failures it will retry, and that a refresh retries them too', async () => {
+  it('mentions the failures it will retry, and which of them a refresh retries', async () => {
     // Otherwise a failed file is a reason to reach for the expensive button when the cheap
-    // one would have done it: a failed file has no fingerprint to skip on.
+    // one would have done it: a refresh retries a failure that may not recur.
     getCorpus.mockResolvedValue(corpus({ chunkSets: [chunkSet({ failedCount: 8 })] }));
 
     render(<CorpusDetail {...props} />);
