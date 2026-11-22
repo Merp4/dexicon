@@ -111,6 +111,10 @@ describe('runs that found nothing to do', () => {
 
     expect(await screen.findByText('0 indexed')).toBeInTheDocument();
     expect(screen.queryByText(/scheduled refresh/)).not.toBeInTheDocument();
+    // A refresh counts files it found unchanged with those it excluded, so the label names both.
+    const counts = screen.getAllByText('30 unchanged or skipped');
+    expect(counts).toHaveLength(3);
+    expect(counts[0]).toHaveAttribute('title', expect.stringMatching(/^Files unchanged since the last run, and files left out/));
   });
 
   it('does not collapse a failure that wrote nothing', async () => {

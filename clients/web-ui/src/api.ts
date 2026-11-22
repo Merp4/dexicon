@@ -524,7 +524,7 @@ export const api = {
 
   /**
    * Replace a key's scopes. The server drops its cached principals, so a scope removed is
-   * refused from the agent's next call; a tool a scope adds is listed when its client next
+   * refused on the agent's next call; a tool a scope adds is listed when its client next
    * reconnects, since the MCP transport cannot tell it the list changed.
    */
   setTokenScopes: (id: string, scopes: string[]) =>

@@ -196,7 +196,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
       {rows !== null && rows.length > 0 && first && (
         <>
           <p className="m-0 text-sm text-muted-foreground" aria-live="polite">
-            {count(first.matching, 'search', 'searches')} {filtered ? (first.matching === 1 ? 'matches' : 'match') : 'recorded'}
+            {count(first.matching, 'search', 'searches')} {filtered ? (first.matching === 1 ? 'matches' : 'match') : 'recorded'}.
             {first.oldestUtc && <> The oldest was <time title={localTime(first.oldestUtc)}>{relativeTime(first.oldestUtc)}</time>.</>}
           </p>
           <div className="overflow-x-auto rounded-lg border border-border bg-card">
