@@ -1857,7 +1857,8 @@ after the walk:
 Two properties this buys:
 
 - A refresh over an unchanged tree makes **zero** embedding calls.
-- A failed file is retried next time, because its hash was never recorded.
+- A failed file is retried next time, because its hash was never recorded, unless the failure
+  was in the file's own content ([below](#a-file-the-last-pass-finished-with-is-not-read-again)).
 
 The hash above is the **chunking fingerprint**, not the content hash alone:
 

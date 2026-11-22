@@ -125,9 +125,9 @@ Mounts are read-only by design; Dexicon does not write to source trees.
   configured value is applied on every start, which is what makes it the way back in.
   Without that the only recovery is deleting the catalogue, which deletes every corpus
   with it.
-- **Pasted a key into the sign-in form**: the UI takes the password, not a key. A key
-  authenticates but can never carry `admin`, so it would load the shell and then be
-  refused on every screen.
+- **Pasted a key into the sign-in form**: the UI takes the password, not a key. The
+  form sends what it is given to `POST /api/session` as a password, so a key is refused with
+  "Incorrect password" and counts as a failed attempt.
 - **The password is refused, and then the form waits**: the log prints it in double quotes,
   and the quotes are not part of it. After two failed attempts each further one doubles the
   wait, up to 30 seconds. The count is shared by every caller, is forgotten after 15
