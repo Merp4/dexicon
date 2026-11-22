@@ -92,7 +92,7 @@ tool advertises.
 | `corpus` | array of string | everything the key can reach | Corpus names to search. With several corpora, name the one or two whose list_corpora descriptions fit the question: searching all of them lets hits from the others crowd out the answer. Omit to search everything visible to you. |
 | `mode` | string | `hybrid` | hybrid blends meaning with exact terms; semantic is meaning only; keyword is exact-match only and keeps working when embeddings are unavailable. |
 | `limit` | integer | 10 | Maximum results, 1-50. |
-| `pathPrefix` | string | none | Restrict to files under this path: a folder or a file, matched at whole path segments and ignoring case, relative to the source root, not the corpus. `src/Auth` finds `src/Auth/a.cs` and not `src/Authorization/c.cs` or `lib/src/Auth/b.cs`. Use `source` to narrow by folder instead when the folder is a source's root ([05](05-search.md#shape-of-a-query)). |
+| `pathPrefix` | string | none | Restrict to files under this path: a folder or a file, matched at whole path segments and ignoring case, relative to the source root, not the corpus. `src/Auth` finds `src/Auth/a.cs` and not `src/Authorization/c.cs` or `lib/src/Auth/b.cs`. Use `source` to narrow by folder instead when the folder is a source's root. See also [05](05-search.md#shape-of-a-query). |
 | `source` | string | none | Restrict to one source, by the root path a search result cites, e.g. books/manuals/Architecture. A parent matches everything beneath it, so books/manuals covers every topic folder under it. list_corpora does not list these; run a search first, or pass a wrong one and the error lists them, up to 1,500 characters and then how many more. |
 | `language` | string | none | Restrict to one language, e.g. csharp, python, typescript. |
 | `symbol` | string | none | Restrict to chunks declaring this symbol, e.g. TokenService. |
@@ -461,7 +461,7 @@ section shows.
 | Unknown corpus, `index_refresh`, `propose_removal`, configuration tools | `No corpus named 'api' is reachable by key 'claude-code'. Corpora this key can reach: api-repo, rfc-library.` |
 | No reachable corpora, `search_index` | `Key 'claude-code' can reach no corpora. Create one in the UI, or check which corpora this key is mapped to under Access.` |
 | Dimension mismatch | `Collection '<collection>' was indexed with 768-dimension vectors but the configured model produces 1024. Rebuild the corpus with the current model, or restore the original one.` |
-| Key lacks the scope | `This key has scopes [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` |
+| Key lacks the scope | `This key has scopes [search] and needs 'ingest'. Whoever runs Dexicon can grant it on the Access page.` A `dexicon://` resource ends the message after `needs 'search'.` |
 | No principal on the request | `Not authenticated. Add an Authorization: Bearer dex_… header to the MCP server configuration.` |
 | No such file, `get_context` | `No indexed file 'src/Missing.cs' in corpus 'api-repo'. Check the path is exactly as search_index returned it.` |
 | Line past the end, `get_context` | `'docs/auth.md' in corpus 'api-repo' has no line 900; it runs to line 120.` |

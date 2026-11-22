@@ -340,7 +340,7 @@ the state does, and clears on the next pass that completes. `scope[].name` is qu
 default.
 
 Over MCP, `search_index` returns one text block for a model to read, not this JSON: a
-header (`N results for "query" (mode, corpus: names)`, or `N results containing "phrase" (...)`
+header (`N results for "query" (mode, corpus: names)`, with `1 result` or `No results` for one or none, or `N results containing "phrase" (...)`
 for a search by phrase alone, or `N results for "query" containing "phrase" (...)`), then any
 `! DEGRADED:` and `!` note lines, then each hit as a numbered location line followed by its content. The structured
 result is the response of `POST /api/search` ([13](13-integration.md)).
