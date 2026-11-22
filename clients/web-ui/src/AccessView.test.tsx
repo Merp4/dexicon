@@ -125,7 +125,7 @@ describe("a key's scopes", () => {
     await user.click(await screen.findByRole('button', { name: 'Change the scopes of laptop-agent' }));
     const dialog = await screen.findByRole('dialog', { name: 'What laptop-agent can do' });
     await user.click(within(dialog).getByRole('button', { name: 'configure' }));
-    expect(within(dialog).getByText(/reaches the whole workspace/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/can read the whole workspace/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Save/ }));
 
     expect(setTokenScopes).toHaveBeenCalledWith('t1', ['search', 'configure']);
@@ -178,7 +178,7 @@ describe("a key's scopes", () => {
     const propose = within(dialog).getByRole('button', { name: 'propose' });
     const configure = within(dialog).getByRole('button', { name: 'configure' });
     expect(propose).toHaveAttribute('aria-pressed', 'false');
-    expect(within(dialog).getByText(/each request waits for your decision/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Each request waits for your decision under Approvals/)).toBeInTheDocument();
 
     await user.type(within(dialog).getByPlaceholderText('claude-code'), 'reviewer');
     await user.click(propose);
@@ -202,13 +202,13 @@ describe("a key's scopes", () => {
     const ingest = within(dialog).getByRole('button', { name: 'ingest' });
     const destroy = within(dialog).getByRole('button', { name: 'destroy' });
     expect(destroy).toHaveAttribute('aria-pressed', 'false');
-    expect(within(dialog).getByText(/It cannot detach one: that is destroy/)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/nothing asks first. A document no other corpus holds is deleted/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Detaching a document needs destroy/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/without asking you first. A document that no other corpus holds is deleted/)).not.toBeInTheDocument();
 
     await user.type(within(dialog).getByPlaceholderText('claude-code'), 'cleaner');
     await user.click(destroy);
     expect(ingest).toHaveAttribute('aria-pressed', 'false');
-    expect(within(dialog).getByText(/nothing asks first. A document no other corpus holds is deleted/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/without asking you first. A document that no other corpus holds is deleted/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: /Create/ }));
 
     expect(createToken).toHaveBeenCalledWith('cleaner', ['search', 'destroy'], { all: true });

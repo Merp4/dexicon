@@ -102,7 +102,7 @@ describe('what is waiting', () => {
     ]);
     show();
 
-    expect(await screen.findByText(/no longer there\. Approving records the request as failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/The target no longer exists\. Approving marks the request as failed/)).toBeInTheDocument();
     expect(screen.getByText(/cannot be approved now: it is the default chunk set/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve: Delete the chunk set alt-1/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Approve: Remove the source files:docs/ })).toBeEnabled();
@@ -116,7 +116,7 @@ describe('approving', () => {
 
     await user.click(await screen.findByRole('button', { name: /Approve: Remove the source/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Remove the source files:docs from notes?' });
-    expect(within(dialog).getByText(/This takes 214 files and 1,912 chunks, across 2 chunk sets/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/This removes 214 files and 1,912 chunks, across 2 chunk sets/)).toBeInTheDocument();
     expect(approveProposal).not.toHaveBeenCalled();
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -149,10 +149,10 @@ describe('approving', () => {
     await user.click(await screen.findByRole('button', { name: /Approve: Detach the document/ }));
     const dialog = await screen.findByRole('dialog');
 
-    expect(within(dialog).getByText(/This takes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/deleted from storage when no other corpus holds it, and getting it back means uploading it again/)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/files on disk/)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/indexing it again/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/This removes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/deleted from storage if no other corpus holds it\. This cannot be undone: upload the document again/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/files on disk/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/index it again/i)).not.toBeInTheDocument();
   });
 
   it('keeps the files-on-disk wording for a source', async () => {
@@ -162,7 +162,7 @@ describe('approving', () => {
     await user.click(await screen.findByRole('button', { name: /Approve: Remove the source/ }));
     const dialog = await screen.findByRole('dialog');
 
-    expect(within(dialog).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Files on disk are not changed/)).toBeInTheDocument();
   });
 
   it('says removing a corpus deletes the uploaded documents no other corpus holds', async () => {
@@ -175,9 +175,9 @@ describe('approving', () => {
     await user.click(await screen.findByRole('button', { name: /Approve: Delete the corpus notes/ }));
     const dialog = await screen.findByRole('dialog');
 
-    expect(within(dialog).getByText(/The files on disk are untouched\. Uploaded documents that no other corpus holds are deleted/))
+    expect(within(dialog).getByText(/Files on disk are not changed\. Uploaded documents that no other corpus holds are deleted/))
       .toBeInTheDocument();
-    expect(within(dialog).getByText(/indexing the folders again and uploading the documents again/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/index the folders again and upload the documents again/)).toBeInTheDocument();
   });
 
   it('shows a refusal in the dialog and leaves the dialog open to be read', async () => {

@@ -718,7 +718,7 @@ describe('adding a source', () => {
 
     expect(within(dialog).getByLabelText('Size limit (MB)')).toHaveValue(0.25);
     expect(within(dialog).getByRole('checkbox', { name: 'Size limit: use the server default' })).toBeChecked();
-    expect(within(dialog).getByText(/have their own limit, 512\.0 MB/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/use a separate limit \(512\.0 MB\)/)).toBeInTheDocument();
 
     expect(within(dialog).getByRole('checkbox', { name: /^Respect \.gitignore/ })).toBeChecked();
   });
@@ -1051,11 +1051,11 @@ describe('files no source covers', () => {
 
     render(<CorpusDetail {...props} />);
 
-    expect(await screen.findByText(/covered by no source/)).toBeInTheDocument();
+    expect(await screen.findByText(/not in any source/)).toBeInTheDocument();
     expect(screen.getByText('books/manuals')).toBeInTheDocument();
     expect(screen.getByText('An Invented Handbook.pdf')).toBeInTheDocument();
     // The consequence, not just the fact. Without it this is a statistic.
-    expect(screen.getByText(/Searching will never return it/)).toBeInTheDocument();
+    expect(screen.getByText(/Search cannot return it/)).toBeInTheDocument();
   });
 
   it('says nothing at all when every file is covered', async () => {
@@ -1066,7 +1066,7 @@ describe('files no source covers', () => {
     render(<CorpusDetail {...props} />);
 
     await screen.findByText('api-repo');
-    expect(screen.queryByText(/covered by no source/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not in any source/)).not.toBeInTheDocument();
   });
 
   it('lists five files and counts the rest', async () => {
@@ -1144,7 +1144,7 @@ describe('files no source covers', () => {
     render(<CorpusDetail {...props} />);
 
     expect(await screen.findByText('api-repo')).toBeInTheDocument();
-    expect(screen.queryByText(/covered by no source/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not in any source/)).not.toBeInTheDocument();
     expect(props.onError).not.toHaveBeenCalled();
   });
 });
@@ -1329,7 +1329,7 @@ describe('editing a source filter', () => {
     await user.clear(cap);
     await user.type(cap, '0');
 
-    expect(await within(dialog).findByText(/A limit of zero indexes nothing/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/A limit of zero would index no files/)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /^Save changes$/ })).toBeDisabled();
   });
 
@@ -1407,7 +1407,7 @@ describe('editing a history source', () => {
     expect(stashes).not.toBeChecked();
 
     await user.click(stashes);
-    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Indexed documents are kept/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: /^Save changes$/ }));
@@ -1438,7 +1438,7 @@ describe('editing a history source', () => {
     const { user, dialog } = await openEditor();
 
     await pickBranch(user, dialog, /^origin\/main · last commit/);
-    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Indexed documents are kept/)).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('checkbox', { name: /^The diff/ }));
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
@@ -1469,7 +1469,7 @@ describe('editing a history source', () => {
     const paths = within(dialog).getByLabelText('Paths');
     await user.clear(paths);
     await user.type(paths, 'docs/**, src/**');
-    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Indexed documents are kept/)).toBeInTheDocument();
 
     await user.type(paths, ', tests/**');
     expect(within(dialog).getByText(/Saving re-reads every commit/)).toBeInTheDocument();
@@ -1499,7 +1499,7 @@ describe('editing a history source', () => {
     const paths = within(dialog).getByLabelText('Paths');
     await user.clear(paths);
     await user.type(paths, '/docs');
-    expect(within(dialog).getByText(/documents already indexed\s+are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Indexed documents are kept/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/Saving re-reads every commit/)).not.toBeInTheDocument();
 
     await user.clear(paths);
@@ -2338,7 +2338,7 @@ describe('when a run finishes', () => {
     render(<CorpusDetail {...props} live={lastRun({ filesDone: 0, filesSkipped: 12, chunksWritten: 0 })} />);
 
     expect(await screen.findByRole('progressbar')).toHaveAttribute(
-      'aria-valuetext', 'Succeeded · no files re-indexed, 12 checked');
+      'aria-valuetext', 'Succeeded · no files re-indexed, 12 checked (counted once per chunk set)');
   });
 
   it('still counts a run that did something, and one that failed without reading anything', async () => {
@@ -2451,7 +2451,7 @@ describe('deleting a corpus', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
 
-    expect(within(screen.getByRole('dialog')).getByText(/This removes 475 chunks across its 2 chunk sets from the vector store/))
+    expect(within(screen.getByRole('dialog')).getByText(/This deletes 475 chunks across its 2 chunk sets from the vector store/))
       .toBeInTheDocument();
   });
 
@@ -2469,7 +2469,7 @@ describe('deleting a corpus', () => {
     getCorpus.mockResolvedValue(corpus({ sources: [source()] }));
     render(<CorpusDetail {...props} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-    expect(within(screen.getByRole('dialog')).getByText(/The files on disk are untouched/)).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText(/Files on disk are not changed/)).toBeInTheDocument();
     expect(within(screen.getByRole('dialog')).queryByText(/Uploaded documents that no other corpus holds/))
       .not.toBeInTheDocument();
   });
@@ -2634,7 +2634,7 @@ describe('the full reindex', () => {
     render(<CorpusDetail {...props} />);
     await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
 
-    expect(await screen.findByText(/To move to another embedding model, this is not the button/))
+    expect(await screen.findByText(/To switch to another embedding model, add a chunk set/))
       .toBeInTheDocument();
   });
 
@@ -2678,8 +2678,8 @@ describe('the full reindex', () => {
 
     const text = (await screen.findByRole('dialog')).textContent?.replace(/\s+/g, ' ') ?? '';
 
-    expect(text).toContain('not cleared up front');
-    expect(text).toContain('deleted before the new ones are written');
+    expect(text).toContain('not cleared first');
+    expect(text).toContain('its old vectors are deleted and the new ones written');
     expect(text).toContain('stays missing until a later pass');
     expect(text).not.toContain('Search keeps working while it runs');
   });

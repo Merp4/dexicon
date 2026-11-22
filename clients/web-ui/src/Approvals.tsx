@@ -112,8 +112,8 @@ export function ApprovalsView({ onError, onDecided }: {
         <div>
           <h1 className="m-0 text-lg font-semibold">Approvals</h1>
           <p className="m-0 mt-1 max-w-[70ch] text-sm text-muted-foreground">
-            Removals that agents holding the propose scope have asked for. Approving removes the target
-            for good. Rejecting leaves it, and the agent can ask again.
+            Removal requests from agents whose key has the propose scope. Approving removes the target
+            for good. Rejecting keeps it, and the agent can ask again.
           </p>
         </div>
         <Segmented<Tab>
@@ -155,13 +155,13 @@ export function ApprovalsView({ onError, onDecided }: {
 
               {tab === 'waiting' && takes(p) && (
                 <p className="m-0 text-sm">
-                  <span className="text-muted-foreground">Would take </span>{takes(p)}.
+                  <span className="text-muted-foreground">Would remove </span>{takes(p)}.
                 </p>
               )}
 
               {tab === 'waiting' && p.gone && (
                 <Notice tone="warn">
-                  It is no longer there. Approving records the request as failed and removes nothing.
+                  The target no longer exists. Approving marks the request as failed and removes nothing.
                 </Notice>
               )}
               {tab === 'waiting' && p.facts?.blocker && (
@@ -249,18 +249,18 @@ function ApproveModal({ proposal: p, onClose, onApproved }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         {p.gone
-          ? 'It is no longer there, so nothing will be removed. The request is recorded as failed.'
+          ? 'The target no longer exists, so nothing will be removed. The request is marked as failed.'
           : <>
-              {amount ? <>This takes {amount}. </> : null}
+              {amount ? <>This removes {amount}. </> : null}
               {p.kind === 'document'
                 // An uploaded document has no file on disk to index again. Its bytes and extracted
                 // text are deleted with its last attachment, and getting it back means uploading it.
-                ? 'The document is deleted from storage when no other corpus holds it, and getting it back means uploading it again. It cannot be undone from here.'
+                ? 'The document is deleted from storage if no other corpus holds it. This cannot be undone: upload the document again to restore it.'
                 : p.kind === 'corpus'
                   // Removing a corpus releases its uploaded documents the way a last detach does.
-                  ? 'The files on disk are untouched. Uploaded documents that no other corpus holds are deleted. '
-                    + 'It cannot be undone from here; getting it back means indexing the folders again and uploading the documents again.'
-                  : 'The files on disk are untouched. It cannot be undone from here; getting it back means indexing it again.'}
+                  ? 'Files on disk are not changed. Uploaded documents that no other corpus holds are deleted. '
+                    + 'This cannot be undone: to restore the corpus, index the folders again and upload the documents again.'
+                  : 'Files on disk are not changed. This cannot be undone: index it again to restore it.'}
             </>}
       </p>
       <div className="flex justify-end gap-2">

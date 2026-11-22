@@ -132,13 +132,13 @@ describe('the document library', () => {
     const card = row.closest('article')!;
 
     expect(within(card).getByText('980 chunks')).toBeInTheDocument();
-    expect(within(card).getByText(/from 768 tokens \/ 100 overlap, language-aware/)).toBeInTheDocument();
+    expect(within(card).getByText(/at 768 tokens, 100 overlap, language-aware/)).toBeInTheDocument();
     // Formatted the way the component formats it. The literal used to be hard-coded with
     // a `.replace(',', ',')` beside it, which replaced a comma with a comma and did
     // nothing; the separator it was presumably meant to normalise is locale-dependent,
     // so under de-DE or fr-FR this asserted on a string the component never renders.
     expect(within(card).getByText(`${(2940).toLocaleString()} chunks`)).toBeInTheDocument();
-    expect(within(card).getByText(/from 256 tokens \/ 40 overlap, blank-line/)).toBeInTheDocument();
+    expect(within(card).getByText(/at 256 tokens, 40 overlap, blank-line/)).toBeInTheDocument();
   });
 
   it('takes dropped files before a corpus is chosen, and will not upload until one is', async () => {
@@ -223,7 +223,7 @@ describe('the document library', () => {
     await user.click(await screen.findByRole('button', { name: /attach to another corpus/i }));
     const dialog = await screen.findByRole('dialog');
 
-    expect(within(dialog).getByText(/nothing is re-uploaded/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Nothing is uploaded again/i)).toBeInTheDocument();
     await waitFor(() =>
       expect(within(dialog).getByText(/768 tokens \/ 100 overlap/)).toBeInTheDocument(),
     );
@@ -643,7 +643,7 @@ describe('detaching a document', () => {
     const dialog = await screen.findByRole('dialog');
 
     expect(dialog).toHaveTextContent(/No other corpus holds this document, so it is deleted/);
-    expect(dialog).toHaveTextContent(/Upload it again to get it back/);
+    expect(dialog).toHaveTextContent(/Upload it again to restore it/);
   });
 
   it('shows a refusal in the dialog that asked', async () => {

@@ -128,7 +128,7 @@ export function SearchesView({ onError }: { onError: (e: unknown) => void }) {
       {settings && !settings.enabled && (
         <Notice tone="warn">
           The search log is switched off (<code>DEXICON__SEARCHLOG__ENABLED</code>), so new searches are not recorded.
-          Existing rows are removed when they pass the retention period, and are never removed when it is 0 days or less.
+          Existing entries are still deleted when they pass the retention period, and are kept indefinitely if it is 0 days or less.
         </Notice>
       )}
       {settings?.enabled && (

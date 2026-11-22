@@ -662,7 +662,7 @@ export function Empty({
  * in the running app on the Full reindex dialog, after Escape and after Cancel. It goes
  * back to whatever had focus when this opened instead.
  *
- * That element can be gone by then. New key → Token created closes one modal and opens the
+ * That element can be gone by then. New key → Key created closes one modal and opens the
  * next in a single update, so the second opens from a button the same commit removes. Each
  * open modal therefore remembers where it came from, and a modal opened from inside another
  * falls back to that one's origin when its own opener is gone or disabled.

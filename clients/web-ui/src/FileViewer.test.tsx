@@ -138,7 +138,7 @@ describe('opening a file from the list', () => {
 
     const { dialog } = await openTheFile();
 
-    expect(await within(dialog).findByText('2 gaps in the index')).toBeInTheDocument();
+    expect(await within(dialog).findByText('2 line ranges not indexed, marked in the text')).toBeInTheDocument();
   });
 
   it('says so when another source of the corpus holds a file at the same path', async () => {

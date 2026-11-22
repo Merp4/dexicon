@@ -133,7 +133,7 @@ describe('the import screen', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/2 items make a change/)).toBeInTheDocument();
     expect(within(dialog).getByText(/No corpus, source or chunk set is deleted/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/a narrower filter\s+removes the files it excludes from the index/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/A narrower filter\s+removes the files it excludes from the index/)).toBeInTheDocument();
     expect(importConfig).toHaveBeenCalledTimes(1);
 
     importConfig.mockResolvedValueOnce(plan({ applied: true, counts: { create: 2 } }));

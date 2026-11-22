@@ -129,7 +129,7 @@ describe('Modal', () => {
   });
 
   it('gives focus back to the page when one modal replaces another', async () => {
-    // Shaped like New key → Token created: a button inside the first modal closes it and
+    // Shaped like New key → Key created: a button inside the first modal closes it and
     // opens the second in one update. The second opens from a control that the same commit
     // removes, so it has to close back to what opened the first.
     function Chain() {
@@ -143,7 +143,7 @@ describe('Modal', () => {
             </Modal>
           )}
           {step === 'created' && (
-            <Modal title="Token created" onClose={() => setStep('none')}>
+            <Modal title="Key created" onClose={() => setStep('none')}>
               <Button onClick={() => setStep('none')}>Done</Button>
             </Modal>
           )}
