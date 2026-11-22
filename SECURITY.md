@@ -64,7 +64,7 @@ Dexicon assumes it is reachable only by people you trust:
   [docs/09-deployment.md](docs/09-deployment.md).
 - Embedding provider API keys are never stored in the catalogue. Configuration names the
   environment variable that holds one (`ApiKeyEnvVar`), or, for a deployment that injects
-  configuration from a secret store, sets `ApiKey` directly; neither value is logged.
+  configuration from a secret store, sets `ApiKey` directly.
 
 If you put Dexicon behind a reverse proxy on a shared network, note that it trusts no
 request header for identity: a caller is whoever their bearer says they are, and there is

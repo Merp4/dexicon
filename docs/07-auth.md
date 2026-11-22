@@ -187,8 +187,9 @@ Rules:
    reach: …`) rather than being dropped. Dropping it would return incomplete results without
    indicating so.
 3. **If the result is empty, throw.** No search reaches Qdrant without a `corpus_id`
-   filter. The other reads (a file's chunks for `get_context`) filter by chunk set and run
-   after scope resolution.
+   filter. A request that reads a file's chunks (`get_context`, the file view, a `dexicon://`
+   resource, context neighbours) filters by chunk set after scope resolution; the indexer and
+   the start-up passes (`PurgeUnsetChunksAsync`, the path-prefix backfill) answer no request.
 
 The last rule is the one that matters, so it is defended three times over:
 
