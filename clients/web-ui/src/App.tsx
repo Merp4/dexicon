@@ -558,7 +558,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
                 <Notice key={c.set} tone="warn" className="text-xs">
                   <strong className="mono">{c.set}</strong> was built with{' '}
                   <span className="mono">{c.model}</span>, which now returns different embeddings than
-                  when the set was created (similarity {c.similarity.toFixed(3)}; 1 means identical).
+                  when the set last held vectors from one model only (similarity {c.similarity.toFixed(3)}; 1 means identical).
                   Files indexed since use the current model, so the set holds embeddings from two
                   models. A full reindex of its corpus re-embeds every file.
                 </Notice>
@@ -573,7 +573,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
             <div className="mt-2.5 grid gap-1.5">
               {reframed.map((c) => (
                 <Notice key={c.set} tone="warn" className="text-xs">
-                  <strong className="mono">{c.set}</strong> was embedded with the document framing{' '}
+                  <strong className="mono">{c.set}</strong> was last fully embedded with the document framing{' '}
                   <span className="mono">{c.recorded}</span>, but <span className="mono">{c.model}</span> now
                   uses <span className="mono">{c.current}</span>. Queries use the current framing, so they
                   may match this set's vectors less well. A full reindex of its corpus re-embeds every
@@ -1055,7 +1055,7 @@ function ProgressBar({ job, sources }: {
   const noneIndexed = String(job.phase).toLowerCase() === 'succeeded'
     && job.filesDone === 0 && job.filesFailed === 0 && job.chunksWritten === 0;
   const caption = noneIndexed
-    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked (${unit} × chunk sets)`
+    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked (counted once per chunk set)`
     : `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
       ` ${unit} · ${count(job.chunksWritten, 'chunk')}`;
 
@@ -2120,7 +2120,7 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
       <p className="mt-0 text-sm">
         This deletes {count(chunks, 'chunk')}
         {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and removes the corpus from
-        the catalogue. Files on disk are not changed. Indexing the corpus again can take a long time.
+        the catalogue. Files on disk are not changed. Indexing the corpus again repeats all the embedding work.
         {corpus.sources.some((s) => s.kind === 'upload')
           && ' Uploaded documents that no other corpus holds are deleted; upload them again to restore them.'}
       </p>
@@ -2300,7 +2300,8 @@ function FullReindexModal({
             <>{failed.toLocaleString()} failures across {sets.length} chunk sets, which can be
               the same {unitFor(corpus.sources, 1)} more than once.</>
           )}{' '}
-          A full reindex retries them. Refresh does too, because failed files are not skipped.
+          A full reindex retries them. Refresh retries failures that may be temporary, such as embedding
+          errors and timeouts, but not files that cannot be read (encrypted or corrupt).
         </Notice>
       )}
 

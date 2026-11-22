@@ -151,8 +151,8 @@ describe('approving', () => {
 
     expect(within(dialog).getByText(/This removes 12 chunks, across 2 chunk sets/)).toBeInTheDocument();
     expect(within(dialog).getByText(/deleted from storage if no other corpus holds it\. This cannot be undone: upload the document again/)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/files on disk/)).not.toBeInTheDocument();
-    expect(within(dialog).queryByText(/indexing it again/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/files on disk/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/index it again/i)).not.toBeInTheDocument();
   });
 
   it('keeps the files-on-disk wording for a source', async () => {

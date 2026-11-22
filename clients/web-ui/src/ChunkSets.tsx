@@ -274,7 +274,7 @@ export function ChunkSetsPanel({
             void act(set.id, () => api.deleteChunkSet(corpus.name, set.name));
           }}
         >
-          Its {count(deleting.chunkCount, 'chunk')} are deleted from the vector store. The
+          This deletes {count(deleting.chunkCount, 'chunk')} from the vector store. The
           other sets of {corpus.name} are not changed. To get this set back, add a set with the
           same settings.
         </ConfirmModal>

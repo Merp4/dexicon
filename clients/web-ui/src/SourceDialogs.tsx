@@ -210,7 +210,7 @@ function FileFilterFields({ value, onChange, fallback, documentMaxBytes }: {
         label="Size limit (MB)"
         hint={
           <>
-            For code and text files. Larger files are skipped. PDF, DOCX, PPTX, EPUB, HTML and Claude
+            For code and text files. Larger files are skipped and listed as skipped. PDF, DOCX, PPTX, EPUB, HTML and Claude
             Code transcript files use a separate limit{documentMaxBytes ? ` (${formatBytes(documentMaxBytes)})` : ''} set
             by the server.
           </>
@@ -357,7 +357,7 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
         {git.maxCommits != null && (
           <CheckField
             label="Keep commits once indexed"
-            hint="Off, only the newest commits within the limit stay indexed, and each new commit removes the oldest. On, the limit only sets how far back the first pass reaches, and indexed commits stay while the ref reaches them."
+            hint="Off, only the newest N commits stay indexed, where N is the limit, and each new commit removes the oldest. On, the limit only sets how far back the first pass reaches, and indexed commits stay while the ref reaches them."
             checked={git.keepIndexed}
             onChange={(v) => set('keepIndexed', v)}
           />
@@ -715,12 +715,12 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
         {rewrites ? (
           <Notice tone="warn" className="text-xs">
             Saving re-reads every commit, because the message, stat, diff and paths decide what each
-            document holds.
+            document holds, so every indexed document is rewritten and embedded again.
           </Notice>
         ) : (
           <Notice tone="neutral" className="text-xs">
             Saving refreshes the corpus. The ref, commit limit, date, merges and stashes change which
-            commits are indexed, not what each document holds. Indexed documents are kept, and those
+            documents are indexed, not what each document holds. Indexed documents are kept, and those
             no longer selected are removed from the index.
           </Notice>
         )}

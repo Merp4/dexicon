@@ -112,8 +112,8 @@ export function ApprovalsView({ onError, onDecided }: {
         <div>
           <h1 className="m-0 text-lg font-semibold">Approvals</h1>
           <p className="m-0 mt-1 max-w-[70ch] text-sm text-muted-foreground">
-            Removal requests from agents whose key has the propose scope. Approving deletes the target
-            permanently. Rejecting keeps it, and the agent can ask again.
+            Removal requests from agents whose key has the propose scope. Approving removes the target
+            for good. Rejecting keeps it, and the agent can ask again.
           </p>
         </div>
         <Segmented<Tab>

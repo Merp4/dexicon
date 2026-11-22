@@ -77,7 +77,7 @@ export function ConfigUpload() {
         Read a configuration file into this instance. Checking it changes nothing and lists what applying would do. Applying adds
         the corpora and sources that are missing and updates the filters of those that are there. It deletes no corpus, source or
         chunk set, but a narrower filter removes the files it excludes from the index at the refresh. Chunk sets other than a
-        new corpus's default, keys and model profiles in the file are ignored.
+        new corpus's default, keys and model profiles in the file are not imported, and each is listed as not imported.
       </p>
 
       <input
@@ -131,9 +131,9 @@ export function ConfigUpload() {
         <Modal title="Apply this file?" onClose={() => setConfirming(false)}>
           <p className="mt-0 text-sm">
             {queues} {queues === 1 ? 'item makes' : 'items make'} a change. Each added or changed source, or corpus default filter,
-            queues a refresh as if it were made by hand, which can mean a lot of indexing on a large instance. A narrower filter
+            queues a refresh, as when you make the change on the corpus page, which can mean a lot of indexing on a large instance. A narrower filter
             removes the files it excludes from the index. No corpus, source or chunk set is deleted. The import cannot be undone
-            as a whole: delete what it created the usual way, and revert an update by applying the earlier file.
+            as a whole: delete what it created from the corpus page, and revert an update by applying the earlier file.
           </p>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setConfirming(false)}>Cancel</Button>

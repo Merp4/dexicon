@@ -2338,7 +2338,7 @@ describe('when a run finishes', () => {
     render(<CorpusDetail {...props} live={lastRun({ filesDone: 0, filesSkipped: 12, chunksWritten: 0 })} />);
 
     expect(await screen.findByRole('progressbar')).toHaveAttribute(
-      'aria-valuetext', 'Succeeded · no files re-indexed, 12 checked (files × chunk sets)');
+      'aria-valuetext', 'Succeeded · no files re-indexed, 12 checked (counted once per chunk set)');
   });
 
   it('still counts a run that did something, and one that failed without reading anything', async () => {

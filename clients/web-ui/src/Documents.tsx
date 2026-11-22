@@ -470,8 +470,8 @@ function AttachModal({
     <Modal title="Attach to another corpus" onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
-        The file is already stored and its text extracted. Attaching chunks that text with the chosen
-        corpus's settings. Nothing is uploaded again.
+        The file is already stored and its text extracted. Attaching splits that text into chunks
+        with the chosen corpus's settings. Nothing is uploaded again.
       </p>
 
       {available.length === 0 ? (

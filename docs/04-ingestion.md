@@ -1478,7 +1478,7 @@ Resolution, in order:
 
 Models are added at **runtime**, through the Models screen, so built-ins are a fallback
 rather than the mechanism: any can be overridden by saving a row, and the UI states which of
-the three applies, so "embedded raw" is visible on screen. An unrecognised model
+the three applies, so "no framing for this model; text is embedded unchanged" is visible on screen. An unrecognised model
 is embedded raw and reports that. Inferring a prefix would be worse than using none: the
 model would embed the literal string `search_query:` as content.
 
