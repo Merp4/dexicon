@@ -1165,7 +1165,9 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
           label="Embedding model"
           hint={
             measured
-              ? `Measured input limit ${measured.maxInputChars != null ? `${measured.maxInputChars.toLocaleString()} characters` : 'none found'}` +
+              ? (measured.maxInputChars != null
+                  ? `Measured input limit ${measured.maxInputChars.toLocaleString()} characters`
+                  : 'Measured: no limit found up to the largest size tested') +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · chunks of ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()} tokens`
               : 'Cannot be changed after the corpus is created. To use another model later, add a chunk set. Run Test limits on the Models tab to measure a model.'
@@ -2513,7 +2515,7 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 
             <div className="dim mt-1.5 text-xs flex gap-3.5 flex-wrap">
               <span>{merged.filesDone.toLocaleString()} indexed</span>
-              <span title="Files unchanged since the last run, and files excluded, oversize or empty">
+              <span title="Files unchanged since the last run, and files left out: excluded, oversize, empty, binary, unreadable, or removed during the run. Counted once per chunk set.">
                 {merged.filesSkipped.toLocaleString()} unchanged or skipped
               </span>
               {merged.filesFailed > 0 && <span className="text-[var(--danger-text)]">{merged.filesFailed.toLocaleString()} failed</span>}

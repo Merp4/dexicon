@@ -518,7 +518,10 @@ function ChunkSetModal({
           label="Chunk size (tokens)"
           hint={
             measured
-              ? `${chosenModel?.name.split(':')[0]} measured input limit ${measured.maxInputChars != null ? `${measured.maxInputChars.toLocaleString()} characters` : 'none found'}` +
+              ? `${chosenModel?.name.split(':')[0]}: ` +
+                (measured.maxInputChars != null
+                  ? `measured input limit ${measured.maxInputChars.toLocaleString()} characters`
+                  : 'no limit found up to the largest size tested') +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · suggested ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()}`
               : 'Estimated at four characters per token. Run Test limits on the Models tab to measure this model.'
@@ -561,7 +564,7 @@ function ChunkSetModal({
         </Notice>
       )}
 
-      <Field label="Boundary mode" hint="Each chunk is filled to the chunk size, then cut at the last boundary of this kind inside it, if there is one.">
+      <Field label="Boundary mode" hint="Each chunk is filled to the chunk size, then cut at the last boundary of this kind inside it that leaves a chunk of useful length. With none, or no such boundary, it is cut at the size.">
         <Select value={boundaryMode} onValueChange={setBoundaryMode}>
           <SelectItem value="language-aware">language-aware — member and declaration boundaries</SelectItem>
           <SelectItem value="blank-line">blank-line — paragraphs</SelectItem>
@@ -1005,8 +1008,11 @@ export function ModelsView() {
                         <strong>{caps.dimensions}</strong> dimensions
                       </span>
                       <span>
-                        accepts{' '}
-                        <strong>{caps.maxInputChars ? caps.maxInputChars.toLocaleString() : 'unbounded'}</strong> chars
+                        {caps.maxInputChars ? (
+                          <>accepts <strong>{caps.maxInputChars.toLocaleString()}</strong> chars</>
+                        ) : (
+                          'no limit found up to the largest size tested'
+                        )}
                       </span>
                       <span>
                         suggested chunk size <strong>{usableChunkTokens(caps.recommendedChunkTokens).toLocaleString()}</strong> tokens
