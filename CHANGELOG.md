@@ -16,6 +16,73 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.8.1 — 2026-11-22
+
+### ⚠️ Upgrading
+
+- **Nothing is read or embedded again.** No migration, chunker version or extractor version changed. The OpenAPI documents, the skill (`dexicon-skill-version: 10`) and
+  the hooks are unchanged.
+- **Stored messages keep the 0.8.0 wording.** A document's reason is stored when it is first extracted, and a settled workspace file keeps its status detail until the file
+  changes, so documents and settled files already in the catalogue show the old text. An unsettled failure (a timeout or an I/O error) is retried, and the file gets the
+  new text at its next refresh. New uploads and changed files get it too. `ExtractorVersions.Current` is unchanged,
+  because raising it would read every file in every corpus again.
+- **The status value `empty` is unchanged** in the API, in MCP answers and in the Files filter request (`status=empty`). Only the web UI shows it differently, as "no text".
+- **Wording changes visible to scripts and log alerts:**
+  - The `index_status` coverage-gap line (`NOT INDEXED: …`) reads "N files in X are in no source, although its subfolders are. Search cannot return them." It read
+    "N file(s) in X are covered by no source, though its subfolders are. Searching will never return them."
+  - The upload problem detail for a read that timed out starts "Reading the file took longer than the N s limit"; it started "Extraction did not finish within". The one for
+    a failure on the server starts "The server could not read the file because of"; it started "Extraction failed on the server, from". Both end "No document was
+    stored, so uploading the file again reads it again."; they ended "No document record was created, and sending the file again extracts it again."
+  - The reason for a PDF with no text layer, in a document's `emptyReason` and a file's status detail, reads "no text layer (probably a scanned PDF), and OCR is not
+    supported". It read "no text layer: this is a scanned PDF, and OCR is not supported".
+  - The timeout message in the log and in a file's status detail reads "Reading 'x' was stopped after N s, the time limit for one file
+    (DEXICON__INDEXING__EXTRACTIONTIMEOUTSECONDS)." It read "'x' was still being read after Ns and was abandoned."
+  - The XML limit messages: "nests XML elements more than 512 levels deep, which is over the limit." (was "more than 512 deep, which is too deep to read."), "holds XML
+    that decompresses to more than N MiB, which is over the limit." (was "inflates to more than N MiB, which is too much to read.") and "has more than N tags, which is
+    over the limit for one document or chapter." (was "contains more than N tags, which is more than can be read.").
+  - The note returned when a model profile's framing changes reads "N chunk sets are re-indexing, because a change of framing changes their vectors." It read "N chunk
+    set(s) are re-indexing: framing changes the vectors."
+  - The promote refusal and the `index_status` coverage-gap line use the singular or the plural, where they said "file(s)".
+- **Rolling back to 0.8.0** needs nothing undone.
+
+### Changed
+
+- **Extraction failure messages (#368).** A message gives the problem, then what to do, then the PDF, DOCX, PPTX, EPUB, HTML or transcript reader's own message with a
+  label, such as `(PDF reader: …)`. The advice is given only for an `UnreadableDocumentException`, where the file's content is at fault. An I/O error, a refused permission, a
+  shortage of memory or a timeout gets the problem and the reader's message, because downloading or saving a good file again does not fix those. Three examples:
+  - A truncated PDF: "'a.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means a download or copy was cut short. Download or copy it again.
+    (Not parsed: the last 4,096 of its 1,048,576 bytes do not hold both startxref and %%EOF.)" It began "'a.pdf' has no PDF trailer (startxref and %%EOF) in its last
+    4,096 bytes" and explained the cost of scanning a PDF backwards a byte at a time.
+  - A binary upload: "'x.png' is a binary file, so it cannot be read as text. Text files and PDF, DOCX, PPTX, EPUB and HTML documents can be read. (It has a NUL byte in its
+    first 8,192 bytes.)" It began "'x.png' is binary (a NUL byte in its first 8,192 bytes)."
+  - A damaged Word document: "'a.docx' could not be read as a Word document. It may be damaged or in another format. Open it and save it again as .docx. (DOCX reader: …)"
+    It read "'a.docx' is not a readable .docx:" followed by the library's message.
+
+  The PowerPoint and EPUB messages have the same three parts. The HTML and transcript messages have the problem and the reader's message, with no advice. The
+  password-protected PDF and the encrypted EPUB messages have the problem and the advice, with no reader's message. A failure outside the readers is labelled
+  `(cause: …)`. The 4,096-byte trailer check,
+  the reason a PDF without a trailer is not parsed, and what the extraction timeout catches are described in [docs/04](docs/04-ingestion.md).
+- **The `empty` status reads "no text" (#369)** on the Documents attachment badge, the Files badge and the Files status filter. The status covers every file that produced no
+  text, including a scanned PDF and a refused upload, and the label "empty" read as a file of zero bytes. The filter's empty states read "No files without text" and "No
+  file without text matches that", with the corpus's own word for files where it has one.
+- **Two notices (#369).** A failed branch list reads "The branches could not be listed. Type a ref instead. Reason: …"; the server's reason ran into the next sentence. The
+  commit limit hint names the checkbox: "With **Keep commits once indexed** unticked, commits past the newest N leave the index on the refresh."
+
+### Verified against 0.8.0
+
+On the image built for `f7c3844`, the code of this release; the release commit changes only this file.
+
+- **Upgrade rehearsal** on a copy of the live catalogue taken at the 0.8.0 deploy: 166 checks passed and none failed (the authenticated smoke test, the detach probes,
+  the checks after a restart with seeded stray files, and the evidence checks). The catalogue held 26 migrations before and after, with `PRAGMA integrity_check` ok and 0
+  foreign key violations. 32 probes sent `{}` and `null` to 16 JSON-body operations, and none returned a 5xx. The 0.8.0 image on the same copy gave the same results and
+  logged the same three error-level entries: the probes' unreachable embedder, and one `UNIQUE constraint failed: blobs.Sha256` logged twice by Entity Framework.
+- **Tests.** CI's build and test job (the .NET suite, the web UI tests and the typecheck) and CodeQL passed on `f7c3844`.
+- **The new text in a running build.** A build of #369 before its merge (`763718f`), run on its own port, showed the new messages on the Documents screen for five uploaded
+  fixtures, and the "no text" badge and filter on the Files tab of a restored corpus.
+- **Review.** #368 and #369 each had an independent review by critic agents, and their findings were fixed before merge.
+- **Not run:** the MCP request probe, the embedding probe and the passes over real documents. No tool schema, embedding, chunker or extraction result changed; only
+  message text did.
+
 ## 0.8.0 — 2026-11-22
 
 ### ⚠️ Upgrading
