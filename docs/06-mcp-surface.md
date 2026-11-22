@@ -247,7 +247,7 @@ a directory says nothing about that directory and is not reported, so a corpus t
 a single folder stays silent.
 
 ```
-  NOT INDEXED: 1 file(s) in books/manuals are covered by no source, though its subfolders are. Searching will never return them.
+  NOT INDEXED: 1 file in books/manuals is in no source, although its subfolders are. Search cannot return it.
     An Invented Handbook.pdf
   Add a source on books/manuals, or move the file into one of its subfolders.
 ```

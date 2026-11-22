@@ -250,7 +250,7 @@ public sealed class SourceCoverageTests : IDisposable
 
         var text = DexiconTools.RenderCoverage([new SourceCoverage.Gap("books/manuals", files)]);
 
-        text.ShouldContain("12 file(s)");
+        text.ShouldContain("12 files in books/manuals are in no source, although its subfolders are. Search cannot return them.");
         text.ShouldContain("book-05.pdf");
         text.ShouldNotContain("book-06.pdf");
         text.ShouldContain("and 7 more");

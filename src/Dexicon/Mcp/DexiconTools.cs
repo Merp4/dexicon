@@ -742,8 +742,9 @@ public sealed class DexiconTools
                 ? "the workspace root"
                 : OneLine(gap.DirectoryRelativePath);
 
-            sb.Append($"  NOT INDEXED: {gap.Files.Count:N0} file(s) in {where} are covered by no source, ");
-            sb.Append("though its subfolders are. Searching will never return them.\n");
+            var one = gap.Files.Count == 1;
+            sb.Append($"  NOT INDEXED: {gap.Files.Count:N0} {(one ? "file" : "files")} in {where} {(one ? "is" : "are")} ");
+            sb.Append($"in no source, although its subfolders are. Search cannot return {(one ? "it" : "them")}.\n");
 
             foreach (var file in gap.Files.Take(5))
                 sb.Append($"    {OneLine(file)}\n");

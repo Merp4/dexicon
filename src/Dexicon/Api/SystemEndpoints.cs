@@ -1277,7 +1277,9 @@ public static class SystemEndpoints
             provider, model, queued,
             queued.Count == 0
                 ? null
-                : $"{queued.Count} chunk set(s) are re-indexing: framing changes the vectors."));
+                : queued.Count == 1
+                    ? "1 chunk set is re-indexing, because a change of framing changes its vectors."
+                    : $"{queued.Count} chunk sets are re-indexing, because a change of framing changes their vectors."));
     }
 
     /// <summary>
