@@ -68,7 +68,7 @@ These are recorded here because they constrain later design choices.
 
 1. **A search whose scope resolves to no corpus is an error, not an empty or a broad
    search.** A search that names no corpus runs over the corpora its key reaches, and every
-   query to the vector store carries a `corpus_id` filter. See [05](05-search.md) and
+   search sent to the vector store carries a `corpus_id` filter. See [05](05-search.md) and
    [07](07-auth.md).
 2. **The embedding model is part of the collection's identity.** Changing model or
    dimensions means a new collection and a rebuild, never a silent mismatch.

@@ -82,16 +82,16 @@ describe('a failing request', () => {
   });
 
   it('carries the server’s own message, which is written for a person to act on', async () => {
-    // "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." is the most useful
+    // "Unknown corpus 'api'. Corpora this key can reach: api-repo, rfc-library." is the most useful
     // thing in the response; a generic "Request failed" throws it away.
     fetchMock.mockResolvedValue(
-      problem(404, 'Unknown corpus', "Unknown corpus 'api'. Visible corpora: api-repo."),
+      problem(404, 'Unknown corpus', "Unknown corpus 'api'. Corpora this key can reach: api-repo."),
     );
 
     await expect(api.getCorpus('api')).rejects.toMatchObject({
       status: 404,
       title: 'Unknown corpus',
-      detail: "Unknown corpus 'api'. Visible corpora: api-repo.",
+      detail: "Unknown corpus 'api'. Corpora this key can reach: api-repo.",
     });
   });
 

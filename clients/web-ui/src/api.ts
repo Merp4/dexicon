@@ -199,7 +199,7 @@ export class ApiError extends Error {
  * Turns whatever the generated client threw into the one error shape the UI renders.
  *
  * The server answers failures with RFC 9457 problem details and writes them for a person
- * to act on: "Unknown corpus 'api'. Visible corpora: api-repo, rfc-library." Losing that
+ * to act on: "Unknown corpus 'api'. Corpora this key can reach: api-repo, rfc-library." Losing that
  * to a generic message would throw away the most useful thing in the response.
  */
 function toApiError(e: unknown, status = 0): ApiError {

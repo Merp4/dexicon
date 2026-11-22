@@ -110,8 +110,8 @@ def main() -> int:
 
     # The server explains itself, and does it better than this hook could: the note names
     # the smallest chunk it had to reject, so "raise the budget" comes with the figure.
-    # Nothing is truncated to fit, by design -- the unit is a whole chunk, because half a
-    # passage under a citation claiming to be the passage reads as complete and is not.
+    # The server cuts only the last block to fit, and says so in the passage, the citation
+    # (`partial`, `omittedChars`) and the note, so the hook passes the text on unchanged.
     note = (result.get("note") or "").strip()
 
     context = (result.get("context") or "").strip()

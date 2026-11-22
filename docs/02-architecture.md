@@ -47,7 +47,8 @@ additional failure mode without benefit. See
 | `WorkScheduler` | in-process queue, one dispatch rule | Holds pending work; hands out a slot when the type has one free and the corpus is idle |
 | `WorkerPool` | `BackgroundService`, one worker per slot | Runs sweeps, index passes and rebuilds; emits progress events |
 | `ScheduledRefreshService` | `BackgroundService` | Queues a refresh of each idle corpus every `DEXICON__INDEXING__REFRESHMINUTES`; off when 0, the default |
-| `SearchLogWriter` | `BackgroundService` | Writes the searches `SearchLog` queued, in batches, and deletes rows older than `DEXICON__SEARCHLOG__RETENTIONDAYS` once a day ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)) |
+| `SearchLogWriter` | `BackgroundService` | Writes the searches `SearchLog` queued, in batches, and deletes rows older than `DEXICON__SEARCHLOG__RETENTIONDAYS` once a day, unless it is 0 or less ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)) |
+| `PathPrefixBackfillService` | `BackgroundService` | Once at start, sets the `path_prefixes` payload on chunks written before it existed; after a failure it tries again a minute later, ten attempts in all ([03](03-data-model.md)) |
 | `ModelCanaryService` | `BackgroundService` | Every six hours (first check one minute after start), embeds a fixed sentence with each chunk set's model and compares it with the stored vector; records the document template of a set that has none. Advisory; `/healthz` reports the result ([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence), [D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)) |
 | `Catalog` | EF Core + SQLite | Corpora, sources, files, jobs, keys and what each reaches |
 | `VectorStore` | `Qdrant.Client` (gRPC) | Collection lifecycle, upsert, query |
@@ -101,7 +102,7 @@ Response
 Two round trips to external services on the hot path (embedding provider, Qdrant query) when
 the resolved scope uses one collection. A collection is one vector space, so a scope that
 spans several embedding models embeds the query for each model (a query embedding is cached
-by model and text) and runs one Qdrant query for each collection, then merges the hits by
+for five minutes by provider, model, the model's query template and the text) and runs one Qdrant query for each collection, then merges the hits by
 score. The sparse encoding is in-process. Target p95 under 400 ms for a warm `embeddinggemma`
 over one collection.
 

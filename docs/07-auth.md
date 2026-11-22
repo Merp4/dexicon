@@ -186,14 +186,16 @@ Rules:
    reachable set produces a **named error** (`Unknown corpus 'x'. Corpora this key can
    reach: …`) rather than being dropped. Dropping it would return incomplete results without
    indicating so.
-3. **If the result is empty, throw.** There is no code path that queries Qdrant without a
-   `corpus_id` filter.
+3. **If the result is empty, throw.** No search reaches Qdrant without a `corpus_id`
+   filter. A request that reads a file's chunks (`get_context`, the file view, a `dexicon://`
+   resource, context neighbours) filters by chunk set after scope resolution; the indexer and
+   the start-up passes (`PurgeUnsetChunksAsync`, the path-prefix backfill) answer no request.
 
 The last rule is the one that matters, so it is defended three times over:
 
 - **Application**: `ResolveReadableAsync` throws rather than returning an empty scope.
-- **Repository**: the Qdrant client wrapper raises `UnscopedQueryException` for any query
-  whose filter lacks a `corpus_id` condition, naming the calling method.
+- **Repository**: `QdrantVectorStore.SearchAsync` raises `UnscopedQueryException`, naming
+  itself, for a search with no corpus in its scope.
 - **Storage**: `hnsw_config.m = 0` ([03](03-data-model.md)) means an unfiltered query has no
   index to traverse. A leak would therefore require a brute-force scan, which is slow and
   detectable.
@@ -269,4 +271,4 @@ be replayed onto a fresh machine
 | A named mapping several keys share | One entity and two join tables to hold a list each key can hold directly. Worth adding when keys start being kept in sync by hand. |
 | Per-corpus write ownership | A corpus has no owner; `ingest` governs reindexing over whatever a key reaches. Worth revisiting if an endpoint is ever shared across a team. |
 | Rate limiting per key | A key is a 32-byte secret and is not guessable, and throttling one would let anyone degrade agent traffic by presenting bad bearers. The password is throttled because it is chosen. |
-| An export of the mapping | Catalogue rows are not in version control. Worth adding if a deployment has to be reproducible from configuration. |
+| Restoring the mapping from a file | The configuration export ([D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file)) writes each key's scopes and reach without its secret, and import ([D-54](decisions.md#d-54-a-configuration-file-can-be-read-into-an-instance-without-deleting-a-corpus-source-or-chunk-set)) reports keys as `not imported`. Reading them needs a way to create a key without a secret and give it one on the Access page. |

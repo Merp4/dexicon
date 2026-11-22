@@ -123,7 +123,7 @@ as the rule it protects.
 | `.env.example` stays complete | `EnvExampleDocumentsEveryVariableComposeUses` asserts every variable `docker-compose.yml` references appears in `.env.example`, `EveryDocumentedEnvironmentVariableBindsToARealOption` asserts every `DEXICON__` variable compose sets binds to an option, and `EverySettingComposePassesIsInTheDeploymentGuide` asserts each one appears in [09](09-deployment.md#configuration). A variable newly forwarded by `docker-compose.yml` without an entry in `.env.example` or the guide fails CI, and so does one that binds to no option. An option never wired into compose is invisible to these three tests. |
 | Every option is read | `EveryOptionPropertyIsReadSomewhere` asserts every property of the options classes is read by code under `src`. |
 | No credential in a derived key or digest, no forged log line | `PrincipalCacheKeyNeverContainsTheToken` asserts the principal cache key does not contain the token's secret; `CallerDigestNeverContainsTheCredential` asserts the caller digest holds neither the secret nor the id and is hex; `LogForgingTests` asserts a request path carrying a newline cannot start a log line; `ExceptionLogForgingTests` asserts the same for an exception (message, inner exception, aggregate member, stack frame, `ToString`) and for a logged value, through the console sink; `McpEchoTests` and `EchoSiteTests` assert a tool error repeats a hostile value on one line and cut, at each site they can drive, and `EchoSiteTests` reads the source of the tools to hold the rest. No test scans log calls for credentials. |
-| No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached after scope resolution. |
+| No unfiltered vector query | `VectorStoreRefusesAQueryWithNoCorpusFilter` asserts that `SearchAsync` throws on an empty scope. The other read methods take a chunk set and are reached from a request only after scope resolution; the indexer and the start-up passes (`PurgeUnsetChunksAsync`, the path-prefix backfill) also read without a corpus filter and answer no request. |
 | Key scoping | `KeyScopingTests` and `AdminPasswordTests` — see [07](07-auth.md). |
 
 Each guard is verified by **breaking the value and watching it go red**, then restoring it.
@@ -397,7 +397,7 @@ indexed.
 
 `GET /api/config/export` and the Settings button write the configuration as one JSON file
 ([D-53](decisions.md#d-53-the-configuration-can-be-downloaded-as-a-file)). It holds the name, scopes, reach and expiry of every key
-that is not revoked, the workspace path of every source, the filters and options of each, and the templates and notes of every
+that is not revoked, the path of every workspace and history source (an upload source is left out, and so is a history source whose stored options cannot be read), the filters and options of each, and the templates and notes of every
 saved model profile. It holds no key secret and no hash (a secret exists only as a hash in the catalogue), no admin password, no id
 and no indexed content. Text typed into a description, a note, a template or a boundary pattern is written as typed, so a secret
 pasted into one is in the file. Only an administrator can fetch it, and the response is marked `Cache-Control: no-store`. Treat a
