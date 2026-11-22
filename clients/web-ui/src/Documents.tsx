@@ -225,8 +225,8 @@ export function DocumentsView({
           {busy ? <><Spinner /> Uploading…</> : 'Drop files here'}
         </p>
         <p className="mt-0 mb-3.5 text-sm text-muted-foreground">
-          PDF, DOCX, PPTX, EPUB, HTML, Markdown and plain text. Extraction happens once per
-          file; chunking happens per corpus.
+          PDF, DOCX, PPTX, EPUB, HTML, Markdown and plain text. Each file's text is extracted once and
+          chunked separately for each corpus.
         </p>
         <Button onClick={() => fileInput.current?.click()} disabled={busy}>
           Choose files
@@ -316,7 +316,7 @@ export function DocumentsView({
       ) : docs.length === 0 ? (
         <Empty
           title="No documents yet"
-          hint="Add a PDF or a doc above. The same file can then be attached to several corpora, each chunked its own way."
+          hint="Upload a document above. A document can be attached to several corpora, and each corpus chunks it with its own settings."
         />
       ) : (
         <div className="grid gap-3">
@@ -350,7 +350,7 @@ export function DocumentsView({
                     <strong className="min-w-[130px]">{a.corpusName}</strong>
                     <Badge tone={stateTone(a.status)}>{a.status}</Badge>
                     <span className="mono">{count(a.chunkCount, 'chunk')}</span>
-                    <span className="text-muted-foreground">from {a.chunkSize} tokens / {a.chunkOverlap} overlap, {a.boundaryMode}</span>
+                    <span className="text-muted-foreground">at {a.chunkSize} tokens, {a.chunkOverlap} overlap, {a.boundaryMode}</span>
                     <span className="flex-1" />
                     <Button
                       variant="danger"
@@ -423,8 +423,8 @@ function DetachModal({
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         {others.length === 0
-          ? 'No other corpus holds this document, so it is deleted: its extracted text and its bytes go with its '
-            + 'chunks. Upload it again to get it back.'
+          ? 'No other corpus holds this document, so it is deleted, with its extracted text, its stored file '
+            + 'and its chunks. Upload it again to restore it.'
           : `It stays stored for ${count(others.length, 'other corpus', 'other corpora')}. `
             + `Its chunks in ${attachment.corpusName} are deleted.`}
       </p>
@@ -470,9 +470,8 @@ function AttachModal({
     <Modal title="Attach to another corpus" onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
-        The bytes are already stored and the text already extracted. Attaching re-chunks
-        that cached text with the target corpus's settings; nothing is re-uploaded and
-        the file is never re-opened.
+        The file is already stored and its text extracted. Attaching chunks that text with the chosen
+        corpus's settings. Nothing is uploaded again.
       </p>
 
       {available.length === 0 ? (

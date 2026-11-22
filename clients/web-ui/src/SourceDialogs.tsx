@@ -210,9 +210,9 @@ function FileFilterFields({ value, onChange, fallback, documentMaxBytes }: {
         label="Size limit (MB)"
         hint={
           <>
-            For code and text files. Larger ones are skipped and listed as skipped. PDF, DOCX, PPTX,
-            EPUB, HTML and Claude Code transcript files have their own limit{documentMaxBytes ? `, ${formatBytes(documentMaxBytes)}` : ''},
-            set by the server.
+            For code and text files. Larger files are skipped. PDF, DOCX, PPTX, EPUB, HTML and Claude
+            Code transcript files use a separate limit{documentMaxBytes ? ` (${formatBytes(documentMaxBytes)})` : ''} set
+            by the server.
           </>
         }
         aside={
@@ -235,7 +235,7 @@ function FileFilterFields({ value, onChange, fallback, documentMaxBytes }: {
       </Field>
       {!capUsable(value) && (
         <Notice tone="danger" role="alert" className="-mt-2 mb-3.5 text-xs">
-          A limit of zero indexes nothing. Tick the default beside it to follow that instead.
+          A limit of zero would index no files. Tick the default beside it to use the default limit instead.
         </Notice>
       )}
     </Section>
@@ -357,7 +357,7 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
         {git.maxCommits != null && (
           <CheckField
             label="Keep commits once indexed"
-            hint="Off, the limit is a window: each new commit pushes the oldest out. On, it sets how far back the first pass reaches, and indexed commits stay while the ref reaches them."
+            hint="Off, only the newest commits within the limit stay indexed, and each new commit removes the oldest. On, the limit only sets how far back the first pass reaches, and indexed commits stay while the ref reaches them."
             checked={git.keepIndexed}
             onChange={(v) => set('keepIndexed', v)}
           />
@@ -376,7 +376,7 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
 
         <CheckField
           label="Stashes"
-          hint="Work kept off the branch, with the untracked files a stash holds (git stash -u), under stashes/. Each version of an untracked file is indexed once, however many stashes hold it. Files git ignores and files a file walk excludes are left out. The ref and the commit limit do not apply; the date and paths do."
+          hint="Index stashes, including the untracked files they hold (git stash -u), under stashes/. Each version of an untracked file is indexed once, however many stashes hold it. Files that git ignores or that file filters exclude are left out. The ref and the commit limit do not apply to stashes; the date and paths do."
           checked={git.includeStashes}
           onChange={(v) => set('includeStashes', v)}
         />
@@ -400,12 +400,12 @@ function HistoryFields({ git, onGitChange, paths, onPathsChange, fallback, repos
         />
         <CheckField
           label="The diff"
-          hint="The patch. Measured over 201 commits with the message and the stat, a commit was about 2,000 characters without it and about thirteen times that with it."
+          hint="The patch. In a sample of 201 commits with message and stat, a commit averaged about 2,000 characters without the diff and about 13 times that with it."
           checked={git.includeDiff}
           onChange={(v) => set('includeDiff', v)}
         />
         {git.includeDiff && (
-          <Field label="Largest diff per commit (KB)" hint="Over it the patch is left out and the document says how large it was. The stat stays.">
+          <Field label="Largest diff per commit (KB)" hint="A larger patch is left out and the document records its size. The stat is kept.">
             <Input
               type="number"
               min={0}
@@ -619,8 +619,8 @@ export function EditSourceModal({ corpus, source, onClose, onSaved }: {
           documentMaxBytes={corpus.configured?.documentMaxBytes ?? null} />
 
         <Notice tone="neutral" className="text-xs">
-          Saving re-walks the corpus. Files a narrower filter now excludes leave the index;
-          nothing on disk is touched.
+          Saving rescans the corpus. Files that a narrower filter excludes are removed from the index;
+          files on disk are not changed.
         </Notice>
 
         <div className="mt-3.5 flex justify-end gap-2">
@@ -714,14 +714,14 @@ export function EditHistorySourceModal({ corpus, source, onClose, onSaved }: {
 
         {rewrites ? (
           <Notice tone="warn" className="text-xs">
-            Saving re-reads every commit. The message, the stat, the diff and the paths decide
-            what each document holds, so every document already indexed changes.
+            Saving re-reads every commit, because the message, stat, diff and paths decide what each
+            document holds.
           </Notice>
         ) : (
           <Notice tone="neutral" className="text-xs">
-            Saving refreshes the corpus. The ref, the commit limit, the date, merges and stashes
-            decide which documents are indexed, not what any of them holds: documents already
-            indexed are kept, and those no longer selected leave the index.
+            Saving refreshes the corpus. The ref, commit limit, date, merges and stashes change which
+            commits are indexed, not what each document holds. Indexed documents are kept, and those
+            no longer selected are removed from the index.
           </Notice>
         )}
 

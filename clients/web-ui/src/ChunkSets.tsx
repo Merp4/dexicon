@@ -139,7 +139,7 @@ export function ChunkSetsPanel({
               is not rendered, so the layout is unchanged. */}
           <strong className="text-sm">Chunk sets</strong>{' '}
           {open ? (
-            <span className="dim text-xs">each is a model and a chunking; search reaches the default one</span>
+            <span className="dim text-xs">each pairs an embedding model with chunk settings; search uses the default set</span>
           ) : (
             searched && (
               <span className="dim text-xs flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -274,9 +274,9 @@ export function ChunkSetsPanel({
             void act(set.id, () => api.deleteChunkSet(corpus.name, set.name));
           }}
         >
-          Its {count(deleting.chunkCount, 'chunk')} will leave the vector store. The
-          other sets of {corpus.name} are untouched, and the content can be chunked this
-          way again by adding a set back.
+          Its {count(deleting.chunkCount, 'chunk')} are deleted from the vector store. The
+          other sets of {corpus.name} are not changed. To get this set back, add a set with the
+          same settings.
         </ConfirmModal>
       )}
 
@@ -294,12 +294,12 @@ export function ChunkSetsPanel({
             void act(set.id, () => api.promoteChunkSet(corpus.name, set.name));
           }}
         >
-          Searches of {corpus.name} will read {corpus.name}:{promoting.name} ({promoting.embeddingModel},{' '}
+          Searches of {corpus.name} will use {corpus.name}:{promoting.name} ({promoting.embeddingModel},{' '}
           {count(promoting.chunkCount, 'chunk')})
           {searched && searched.id !== promoting.id && (
-            <> in place of {corpus.name}:{searched.name} ({searched.embeddingModel})</>
+            <> instead of {corpus.name}:{searched.name} ({searched.embeddingModel})</>
           )}
-          . Both sets are kept, and promoting {searched?.name ?? 'the other'} again puts it back.
+          . Both sets are kept. Promote {searched?.name ?? 'the other'} again to switch back.
         </ConfirmModal>
       )}
 
@@ -487,7 +487,7 @@ function ChunkSetModal({
       {!existing && (
         <Field
           label="Embedding model"
-          hint="Pinned once the set exists: a different model is a different vector space, so changing it means a new set."
+          hint="Cannot be changed after the set is created. To use another model, add a new set."
         >
           {models.length > 0 ? (
             <Select value={model} onValueChange={setModel} placeholder="Choose a model">
@@ -508,8 +508,8 @@ function ChunkSetModal({
 
       {existing && (
         <p className="dim text-xs mt-0">
-          <span className="mono">{existing.embeddingProvider}/{existing.embeddingModel}</span> is fixed for this
-          set. To move to another model or provider, add a set on it and promote once it has built.
+          <span className="mono">{existing.embeddingProvider}/{existing.embeddingModel}</span> cannot be changed
+          for this set. To use another model or provider, add a set with it and promote that set once it has finished building.
         </p>
       )}
 
@@ -521,7 +521,7 @@ function ChunkSetModal({
               ? `${chosenModel?.name.split(':')[0]} was measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · suggested ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()}`
-              : 'Budgeted as four characters a token. Run Test limits on Models to measure this one.'
+              : 'Estimated at four characters per token. Run Test limits on the Models tab to measure this model.'
           }
         >
           <Input
@@ -554,8 +554,7 @@ function ChunkSetModal({
         <Notice tone="warn" className="-mt-2 mb-3.5">
           {chosenModel?.name.split(':')[0]} accepts about{' '}
           {measured?.maxInputChars?.toLocaleString()} characters, roughly{' '}
-          {limitInFieldTokens?.toLocaleString()} at this field's four-characters-a-token
-          budget. At {chunkSize.toLocaleString()},{' '}
+          {limitInFieldTokens?.toLocaleString()} at four characters per token. At {chunkSize.toLocaleString()},{' '}
           {measured?.truncatesSilently
             ? 'it will silently drop the end of every full chunk.'
             : 'full chunks will be rejected.'}
@@ -577,12 +576,12 @@ function ChunkSetModal({
         </Field>
       )}
 
-      <Section title="Meaning">
+      <Section title="Structure">
         <CheckField
           checked={headingContext}
           onChange={setHeadingContext}
           label="Heading context"
-          hint="Embed each chunk under its heading trail, so its vector knows the section it came from. Stored text stays verbatim."
+          hint="Embed each chunk together with its headings, so the vector reflects the section it came from. The stored text is unchanged."
         />
         <CheckField
           checked={unitAware}
@@ -787,8 +786,8 @@ export function ModelsView() {
       <div>
         <h1 className="m-0 text-lg">Embedding models</h1>
         <p className="dim mt-1 mx-0 mb-0 text-sm">
-          A chunk set picks a provider and a model. The model's dimensionality decides which Qdrant collection the
-          set lives in, so changing it means a new set rather than an edit.
+          A chunk set uses one provider and one model. A set's model cannot be changed, because the model's
+          dimensions select the Qdrant collection that holds the set. To use another model, add a new set.
         </p>
       </div>
 
@@ -826,8 +825,7 @@ export function ModelsView() {
         <Notice tone="warn">
           {current.detail}
           <p className="dim mt-1 mx-0 mb-0 text-xs">
-            Credentials come from the environment, never from the catalogue. A chunk set records which provider to
-            use, not how to authenticate to it.
+            Credentials come from the environment. A chunk set records only which provider to use.
           </p>
         </Notice>
       )}
@@ -940,7 +938,7 @@ export function ModelsView() {
                     <div className="text-xs mt-1">
                       {m.templateOrigin === 'none' ? (
                         <span className="text-[var(--warn-text)]">
-                          embedded raw; no task framing for this model
+                          no framing for this model; text is embedded unchanged
                         </span>
                       ) : (
                         <span className="dim">
@@ -982,7 +980,7 @@ export function ModelsView() {
                       <Button
                         variant="danger"
                         disabled={m.inUse}
-                        title={m.inUse ? 'A chunk set embeds with this model. Migrate it first.' : 'Remove from Ollama'}
+                        title={m.inUse ? 'A chunk set uses this model. Delete or replace that set first.' : 'Remove from Ollama'}
                         onClick={() => setRemoving(m.name)}
                       >
                         <Trash2 />
@@ -1096,7 +1094,7 @@ function FramingModal({
   };
 
   return (
-    <Modal title={`Framing — ${model.name}`} onClose={onClose} width={620}>
+    <Modal title={`Framing: ${model.name}`} onClose={onClose} width={620}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       {saved ? (
@@ -1105,7 +1103,7 @@ function FramingModal({
             <>
               <p className="text-sm">
                 Saved. {saved.reindexing.length} chunk set{saved.reindexing.length === 1 ? ' is' : 's are'} re-indexing, because
-                framing changes the vectors and both sides of a search have to agree:
+                changing the framing changes the vectors, and indexed text and queries must use the same framing:
               </p>
               <ul className="mono text-sm">
                 {saved.reindexing.map((s) => <li key={s}>{s}</li>)}
@@ -1124,7 +1122,7 @@ function FramingModal({
             {model.templateOrigin === 'none' && 'This model has no framing: text is embedded exactly as it is. '}
             {model.templateOrigin === 'builtin' && 'Currently using a built-in default. Saving overrides it. '}
             {model.templateOrigin === 'configured' && 'Configured here. '}
-            Use <span className="mono">{'{text}'}</span> where the content goes. On its own it means embed unchanged.
+            Put <span className="mono">{'{text}'}</span> where the content goes. <span className="mono">{'{text}'}</span> alone embeds the content unchanged.
           </p>
 
           <Field label="Indexed text" hint="Applied to every chunk as it is indexed.">
@@ -1151,8 +1149,8 @@ function FramingModal({
 
           {!valid && (
             <Notice tone="warn" className="mb-3.5 text-xs">
-              Both templates must contain <span className="mono">{'{text}'}</span>. Without it every input embeds
-              as the same constant string.
+              Both templates must contain <span className="mono">{'{text}'}</span>. Without it, every input would
+              be embedded as the same text.
             </Notice>
           )}
 

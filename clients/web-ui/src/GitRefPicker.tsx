@@ -163,7 +163,7 @@ export function GitRefPicker({
             </Notice>
           )}
           <p className="dim m-0 text-xs">
-            Switching the checkout changes what is indexed: commits the new branch does not reach leave on the next
+            If the checkout switches branch, commits the new branch does not reach are removed on the next
             refresh.
           </p>
         </>
@@ -227,16 +227,16 @@ export function GitRefPicker({
           )}
           {picked?.kind === 'prefetched' && (
             <p className="dim m-0 text-xs">
-              Moves when git maintenance prefetches, hourly once <span className="mono">git maintenance start</span> has
-              been run in this repository on the host. git records no time for a prefetch, so its last commit is the only
-              date there is.
+              Updated when git maintenance prefetches: hourly after <span className="mono">git maintenance start</span> has
+              been run in this repository on the host. git records no time for a prefetch, so the last commit date is
+              the only date shown.
             </p>
           )}
         </>
       )}
 
       {mode === 'other' && (
-        <Field label="Ref" hint="A branch, a tag or a commit, as git names it. One that names nothing shows on the corpus after the refresh.">
+        <Field label="Ref" hint="A branch, tag or commit, as git names it. A ref that does not exist is reported on the corpus page after the refresh.">
           <Input className="mono" value={value} onChange={(e) => onChange(e.target.value)} placeholder="HEAD" />
         </Field>
       )}

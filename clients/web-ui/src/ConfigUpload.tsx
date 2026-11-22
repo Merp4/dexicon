@@ -76,8 +76,8 @@ export function ConfigUpload() {
       <p className="mt-0 mb-3 text-sm text-muted-foreground">
         Read a configuration file into this instance. Checking it changes nothing and lists what applying would do. Applying adds
         the corpora and sources that are missing and updates the filters of those that are there. It deletes no corpus, source or
-        chunk set, but a narrower filter removes the files it excludes from the index at the refresh. It does not read chunk sets
-        beyond a new corpus's default, keys or model profiles.
+        chunk set, but a narrower filter removes the files it excludes from the index at the refresh. Chunk sets other than a
+        new corpus's default, keys and model profiles in the file are ignored.
       </p>
 
       <input
@@ -130,10 +130,10 @@ export function ConfigUpload() {
       {confirming && (
         <Modal title="Apply this file?" onClose={() => setConfirming(false)}>
           <p className="mt-0 text-sm">
-            {queues} {queues === 1 ? 'item makes' : 'items make'} a change. Adding or changing a source, or a corpus's default filters,
-            queues the same refresh as making the change by hand, which on a large instance is a lot of indexing, and a narrower filter
-            removes the files it excludes from the index. No corpus, source or chunk set is deleted. It cannot be undone as a whole:
-            what it makes is removed through the removal paths, and an update is changed back by applying the earlier file.
+            {queues} {queues === 1 ? 'item makes' : 'items make'} a change. Each added or changed source, or corpus default filter,
+            queues a refresh as if it were made by hand, which can mean a lot of indexing on a large instance. A narrower filter
+            removes the files it excludes from the index. No corpus, source or chunk set is deleted. The import cannot be undone
+            as a whole: delete what it created the usual way, and revert an update by applying the earlier file.
           </p>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setConfirming(false)}>Cancel</Button>

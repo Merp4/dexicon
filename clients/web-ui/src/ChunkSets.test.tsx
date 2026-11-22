@@ -515,7 +515,7 @@ describe('the chunk set list', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Search docs with fine?' });
     expect(promoteChunkSet).not.toHaveBeenCalled();
     expect(dialog).toHaveTextContent(
-      'Searches of docs will read docs:fine (embeddinggemma, 361 chunks) in place of docs:default (nomic-embed-text).',
+      'Searches of docs will use docs:fine (embeddinggemma, 361 chunks) instead of docs:default (nomic-embed-text).',
     );
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));

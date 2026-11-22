@@ -159,7 +159,7 @@ describe('creating a corpus', () => {
   it('says the model cannot be changed later, because it cannot', async () => {
     const { dialog } = await openCreate();
 
-    expect(within(dialog).getByText(/different model is a different vector space/i))
+    expect(within(dialog).getByText(/Cannot be changed after the corpus is created/i))
       .toBeInTheDocument();
   });
   /**

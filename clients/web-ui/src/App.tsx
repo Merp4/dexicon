@@ -543,7 +543,7 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
                   {m.sets.length === 1 ? 'a chunk set needs it' : `${m.sets.length} chunk sets need it`}:{' '}
                   <span className="mono">{m.sets.join(', ')}</span>. Searching{' '}
                   {m.sets.length === 1 ? 'it' : 'them'} returns nothing until the model is
-                  pulled back.
+                  pulled again.
                 </Notice>
               ))}
             </div>
@@ -557,10 +557,10 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
               {changed.map((c) => (
                 <Notice key={c.set} tone="warn" className="text-xs">
                   <strong className="mono">{c.set}</strong> was built with{' '}
-                  <span className="mono">{c.model}</span>, which no longer answers as it did when the
-                  set was recorded (similarity {c.similarity.toFixed(3)}, where 1 is the same model).
-                  Files indexed since are embedded by the current model, so the set mixes two. A full
-                  reindex of its corpus re-embeds everything.
+                  <span className="mono">{c.model}</span>, which now returns different embeddings than
+                  when the set was created (similarity {c.similarity.toFixed(3)}; 1 means identical).
+                  Files indexed since use the current model, so the set holds embeddings from two
+                  models. A full reindex of its corpus re-embeds every file.
                 </Notice>
               ))}
             </div>
@@ -573,11 +573,11 @@ export function HealthDots({ health, connected, stale }: { health: Health | null
             <div className="mt-2.5 grid gap-1.5">
               {reframed.map((c) => (
                 <Notice key={c.set} tone="warn" className="text-xs">
-                  <strong className="mono">{c.set}</strong> was recorded as embedded with the document framing{' '}
-                  <span className="mono">{c.recorded}</span>, and <span className="mono">{c.model}</span> now
-                  frames documents as <span className="mono">{c.current}</span>. Queries use the current
-                  framing, so they may match the set's vectors less well. A full reindex of its corpus
-                  re-embeds everything.
+                  <strong className="mono">{c.set}</strong> was embedded with the document framing{' '}
+                  <span className="mono">{c.recorded}</span>, but <span className="mono">{c.model}</span> now
+                  uses <span className="mono">{c.current}</span>. Queries use the current framing, so they
+                  may match this set's vectors less well. A full reindex of its corpus re-embeds every
+                  file.
                 </Notice>
               ))}
             </div>
@@ -1010,7 +1010,7 @@ export function CorporaView({
                       which is what is searchable: a corpus added while another indexes used to
                       read as empty until its turn came round. */}
                   {c.pendingCount > 0 && (
-                    <span title="found by a discovery sweep, not yet indexed">
+                    <span title="found in the source folders, not indexed yet">
                       {c.pendingCount.toLocaleString()} awaiting indexing
                     </span>
                   )}
@@ -1055,7 +1055,7 @@ function ProgressBar({ job, sources }: {
   const noneIndexed = String(job.phase).toLowerCase() === 'succeeded'
     && job.filesDone === 0 && job.filesFailed === 0 && job.chunksWritten === 0;
   const caption = noneIndexed
-    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked`
+    ? `${job.phase} · no ${unit} re-indexed, ${job.filesTotal.toLocaleString()} checked (${unit} × chunk sets)`
     : `${job.phase} · ${processed.toLocaleString()}/${job.filesTotal.toLocaleString()}` +
       ` ${unit} · ${count(job.chunksWritten, 'chunk')}`;
 
@@ -1168,7 +1168,7 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
               ? `Measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · chunks of ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()} tokens`
-              : 'Fixed once the corpus exists: a different model is a different vector space, so changing it later means a new chunk set. Test limits on Models measures one.'
+              : 'Cannot be changed after the corpus is created. To use another model later, add a chunk set. Run Test limits on the Models tab to measure a model.'
           }
         >
           {models.length > 0 ? (
@@ -1574,7 +1574,7 @@ export function CorpusDetail({
             </span>
           )}
         </Row>
-        <Row label="Searched as">
+        <Row label="In searches">
           <span className="mono">{corpus.name}</span>
           <span className="dim">
             {' '}searches the default chunk set below; <span className="mono">{corpus.name}:name</span> searches
@@ -1840,8 +1840,8 @@ function CoverageNotice({
             <p className="m-0">
               <strong>{files.length.toLocaleString()}</strong>{' '}
               {files.length === 1 ? 'file' : 'files'} in <span className="mono">{where}</span>{' '}
-              {files.length === 1 ? 'is' : 'are'} covered by no source, though its subfolders
-              are. Searching will never return {files.length === 1 ? 'it' : 'them'}.
+              {files.length === 1 ? 'is' : 'are'} not in any source, although its subfolders
+              are. Search cannot return {files.length === 1 ? 'it' : 'them'}.
             </p>
 
             {/* Five, then a count. The whole list belongs behind the Files tab; what this
@@ -1990,7 +1990,9 @@ function FileViewer({
             {/* A gap means the index really is missing those lines. Saying so is the
                 difference between reading a file and reading a plausible one. */}
             {file.gaps > 0 && (
-              <Badge tone="warn">{file.gaps} gap{file.gaps === 1 ? '' : 's'} in the index</Badge>
+              <Badge tone="warn">
+                {file.gaps} line range{file.gaps === 1 ? '' : 's'} not indexed, marked in the text
+              </Badge>
             )}
             {/* How much of the file is on screen. The old badge said "truncated" and
                 stopped there, which states a problem and offers no way out of it. */}
@@ -2116,11 +2118,11 @@ function DeleteCorpusModal({ corpus, onClose, onDeleted }: { corpus: Corpus; onC
     <Modal title={`Delete ${corpus.name}?`} onClose={onClose}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
-        This removes {count(chunks, 'chunk')}
-        {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and the corpus from the
-        catalogue. The files on disk are untouched. Re-indexing it again may take a while.
+        This deletes {count(chunks, 'chunk')}
+        {sets.length > 1 && ` across its ${sets.length} chunk sets`} from the vector store and removes the corpus from
+        the catalogue. Files on disk are not changed. Indexing the corpus again can take a long time.
         {corpus.sources.some((s) => s.kind === 'upload')
-          && ' Uploaded documents that no other corpus holds are deleted, and uploading them again is the way back.'}
+          && ' Uploaded documents that no other corpus holds are deleted; upload them again to restore them.'}
       </p>
       {/* Typing the name, because this destroys an index that may have taken an hour. */}
       <Field label={`Type "${corpus.name}" to confirm`}>
@@ -2160,8 +2162,8 @@ function RevokeTokenModal({ token, onClose, onRevoked }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         {token.lastUsedUtc ? `It was last used ${relativeTime(token.lastUsedUtc)}. ` : 'It has never been used. '}
-        Whatever holds it will be refused on its next call, and a revoked key cannot be restored from here:
-        the agent needs a new one.
+        Anything using this key is refused from its next call. A revoked key cannot be restored: create a
+        new key for the agent.
       </p>
       <div className="flex gap-2 justify-end">
         <Button onClick={onClose}>Cancel</Button>
@@ -2250,24 +2252,23 @@ function FullReindexModal({
     <Modal title={`Full reindex of ${corpus.name}?`} onClose={onClose} width={560} finalFocus={finalFocus}>
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
-        Every {unitFor(corpus.sources, 1)} is read again, whether or not it changed, and
-        re-embedded if it can be read and chunked — in{' '}
+        Every {unitFor(corpus.sources, 1)} is read again, changed or not, and re-embedded if it can be read and
+        chunked, in{' '}
         {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
-        It holds <strong>{chunks.toLocaleString()}</strong> {chunks === 1 ? 'chunk' : 'chunks'} today, and embedding is
-        the slow part.
+        The corpus holds <strong>{chunks.toLocaleString()}</strong> {chunks === 1 ? 'chunk' : 'chunks'} today.
+        Embedding is the slow part.
       </p>
 
       <p className="text-sm">
-        One that is excluded, oversize or empty is recorded without being embedded, as it
-        is on any pass.
+        A {unitFor(corpus.sources, 1)} that is excluded, oversize or empty is recorded without being embedded, as
+        in any pass.
       </p>
 
       <p className="text-sm">
-        The corpus is not cleared up front: vectors are replaced one{' '}
-        {unitFor(corpus.sources, 1)} at a time as the walk reaches it, so the rest stays
-        searchable throughout. The one in hand does not — its old vectors are deleted
-        before the new ones are written, so it is missing from search for that moment, and
-        stays missing until a later pass if its embedding fails or the job is interrupted.
+        The corpus is not cleared first. Vectors are replaced one {unitFor(corpus.sources, 1)} at a
+        time, so the rest stays searchable. The {unitFor(corpus.sources, 1)} being re-embedded is missing
+        from search while its old vectors are deleted and the new ones written, and stays missing until
+        a later pass if embedding fails or the job is interrupted.
       </p>
 
       {/* The settings it will apply. They are set per chunk set and nowhere near this
@@ -2286,7 +2287,7 @@ function FullReindexModal({
             </span>
           </div>
         ))}
-        <div className="dim">Change any of it under Chunk sets, which re-chunks on its own.</div>
+        <div className="dim">Change these under Chunk sets. A change there re-chunks the set without a full reindex.</div>
       </div>
 
       {failed > 0 && (
@@ -2299,15 +2300,14 @@ function FullReindexModal({
             <>{failed.toLocaleString()} failures across {sets.length} chunk sets, which can be
               the same {unitFor(corpus.sources, 1)} more than once.</>
           )}{' '}
-          A full reindex retries them, and so does Refresh — a failure has no fingerprint
-          to skip on.
+          A full reindex retries them. Refresh does too, because failed files are not skipped.
         </Notice>
       )}
 
       <Notice tone="accent">
-        <strong>To move to another embedding model, this is not the button.</strong> A model
-        is a different vector space, so it needs a new chunk set built alongside this one and
-        promoted when it is complete.{' '}
+        <strong>To switch to another embedding model, add a chunk set.</strong> A full reindex keeps the
+        current model. The new set is built alongside this one and replaces it as the default when you
+        promote it.{' '}
         <button type="button" className="underline underline-offset-2" onClick={onShowChunkSets}>
           Add one under Chunk sets
         </button>
@@ -2630,10 +2630,10 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
           </div>
         )}
         <p className="dim text-xs mt-2">
-          Secrets are shown once, at creation, and are stored only as a PBKDF2 hash. There is no way to
-          recover one. Changing what a key reaches takes effect on that agent's next call. A scope
-          removed is refused from its next call; the tools a scope adds are listed to it when its
-          client next reconnects.
+          A key's secret is shown once, when the key is created, and stored only as a PBKDF2 hash, so it
+          cannot be recovered. A change to the corpora a key reaches applies on the agent's next call. A
+          removed scope is refused on the next call; tools from an added scope appear after the agent's
+          client reconnects.
         </p>
       </section>
 
@@ -2671,15 +2671,15 @@ export function AccessView({ onError }: { onError: (e: unknown) => void }) {
       )}
 
       {issued && (
-        <Modal title="Token created" onClose={() => setIssued(null)} width={680}>
+        <Modal title="Key created" onClose={() => setIssued(null)} width={680}>
           <Notice tone="warn" className="mb-3.5">
-            <strong>Copy it now.</strong> This is the only time it will be shown. It is stored as a hash and cannot be recovered.
+            <strong>Copy it now.</strong> It is shown only once. Only a hash is stored, so it cannot be recovered.
           </Notice>
           <pre className="mono overflow-x-auto rounded-md bg-muted p-3 text-xs break-all whitespace-pre-wrap">
             {issued.secret}
           </pre>
           <div className="flex gap-2 mb-4">
-            <CopyButton text={issued.secret} label="Copy token" />
+            <CopyButton text={issued.secret} label="Copy key" />
           </div>
 
           {/* The step between "installed" and "working". */}
@@ -2704,25 +2704,25 @@ const KEY_SCOPES: { id: string; does: string }[] = [
   { id: 'search', does: 'search and read the corpora the key reaches' },
   {
     id: 'ingest',
-    does: 'queue a reindex, with index_refresh, and add or attach documents over the API. '
-      + 'It cannot detach one: that is destroy',
+    does: 'queue a reindex (index_refresh) and add or attach documents over the API. '
+      + 'Detaching a document needs destroy',
   },
   {
     id: 'configure',
-    does: 'create corpora and add or change their folders and filters, with list_folders, '
-      + 'configure_corpus and configure_source. It cannot remove anything',
+    does: 'create corpora and add or change their folders and filters (list_folders, '
+      + 'configure_corpus, configure_source). Cannot remove anything',
   },
   {
     id: 'propose',
-    does: 'ask for a source, chunk set, document or corpus to be removed, with propose_removal. '
-      + 'It removes nothing itself: each request waits for your decision. Independent of configure',
+    does: 'request removal of a source, chunk set, document or corpus (propose_removal). '
+      + 'Each request waits for your decision under Approvals. Does not need configure',
   },
   {
     id: 'destroy',
-    does: 'detach an uploaded document from a corpus over the API, which deletes it when no other corpus holds it. '
-      + 'Nothing asks first. '
-      + 'Sources, chunk sets and corpora are never removed by a key: it asks with propose. '
-      + 'Independent of ingest',
+    does: 'detach an uploaded document from a corpus over the API; the document is deleted when no other corpus holds it. '
+      + 'You are not asked first. '
+      + 'A key cannot remove sources, chunk sets or corpora, only request it with propose. '
+      + 'Does not need ingest',
   },
 ];
 
@@ -2730,7 +2730,7 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
   const toggle = (s: string) => onChange(value.includes(s) ? value.filter((x) => x !== s) : [...value, s]);
 
   return (
-    <Field label="Scopes" hint="Administration is the password's, so a key cannot hold it.">
+    <Field label="Scopes" hint="Administration needs the admin password and cannot be given to a key.">
       <div className="flex gap-1.5 flex-wrap">
         {KEY_SCOPES.map(({ id }) => (
           <Chip key={id} type="button" active={value.includes(id)} onClick={() => toggle(id)}>
@@ -2746,17 +2746,16 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
           once the agent adds it to one it reaches. */}
       {value.includes('configure') && (
         <Notice tone="warn">
-          With configure, the agent can add any mounted folder to a corpus it reaches, or to one it
-          creates. It reaches the whole workspace, whatever corpora it is limited to. What it adds is
-          searchable by a key that holds search and reaches that corpus, which includes this key if
-          you tick search too.
+          With configure, the agent can add any mounted folder to a corpus it reaches or creates, so it
+          can read the whole workspace whatever corpora it is limited to. Any key with search that
+          reaches that corpus can then search what it adds, including this key if you also tick search.
         </Notice>
       )}
       {/* The one removal a key makes with no one deciding. */}
       {value.includes('destroy') && (
         <Notice tone="warn">
-          With destroy, the agent can detach any document from the corpora it reaches, and nothing
-          asks first. A document no other corpus holds is deleted, and uploading it again indexes it again.
+          With destroy, the agent can detach any document from the corpora it reaches without asking you
+          first. A document that no other corpus holds is deleted; uploading it again restores it.
         </Notice>
       )}
     </Field>
@@ -2792,7 +2791,7 @@ function ScopesModal({ token, onClose, onSaved }: {
         <p className="dim text-xs mt-3 mb-0">
           {scopes.length === 0
             ? 'A key needs at least one scope. To stop a key working, revoke it.'
-            : 'A scope removed is refused from the agent\'s next call. The tools a scope adds are listed when its client next reconnects.'}
+            : 'A removed scope is refused from the agent\'s next call. Tools from an added scope appear after the agent\'s client reconnects.'}
         </p>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>
@@ -2856,7 +2855,7 @@ function CorpusReachField({ corpora, all, picked, onAll, onPicked }: {
           <p className="dim text-xs mt-3 mb-0">
             {picked.length === 0
               ? 'Nothing is ticked, so this key reaches no corpus.'
-              : `${picked.length} of ${corpora.length}. Not ones created later.`}
+              : `${picked.length} of ${corpora.length} corpora. Corpora created later are not included.`}
           </p>
         </>
       )}
@@ -2944,7 +2943,7 @@ function CreateTokenModal({ onClose, onCreated, corpora }: {
         <ScopeField value={scopes} onChange={setScopes} />
         <Field
           label="Corpora"
-          hint="What this agent can search. Changeable afterwards without reissuing the key."
+          hint="The corpora this agent can search. You can change this later without creating a new key."
         >
           {corpora.length === 0 ? (
             <p className="dim text-xs m-0">No corpora yet. The key will reach every corpus you create.</p>

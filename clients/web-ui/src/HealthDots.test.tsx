@@ -149,7 +149,7 @@ describe('the dependency panel', () => {
     const alert = screen.getByRole('status');
     expect(alert).toHaveTextContent('books:fine');
     expect(alert).toHaveTextContent('embedded with the document framing {text}');
-    expect(alert).toHaveTextContent('now frames documents as title: none | text: {text}');
+    expect(alert).toHaveTextContent('now uses title: none | text: {text}');
     expect(alert).toHaveTextContent('full reindex of its corpus');
   });
 
