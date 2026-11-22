@@ -50,7 +50,7 @@ does not limit what it can reach ([07](07-auth.md#what-a-key-reaches)). The key 
 in its first line, with `search` and `ingest`. Other scopes are ticked for it on the **Access**
 screen like any key's.
 
-A scope removed is refused from the key's next call. A scope added reaches the agent's tool
+A scope removed is refused on the key's next call. A scope added reaches the agent's tool
 list only when its client connects, because the server is stateless and sends no
 `notifications/tools/list_changed` ([07](07-auth.md#the-mcp-tool-list-is-not-live)). After
 ticking a scope, restart the client session; whether a reconnect command lists the tools

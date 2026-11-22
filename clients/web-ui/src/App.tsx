@@ -1165,7 +1165,7 @@ function CreateCorpusModal({ onClose, onCreated }: { onClose: () => void; onCrea
           label="Embedding model"
           hint={
             measured
-              ? `Measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
+              ? `Measured input limit ${measured.maxInputChars != null ? `${measured.maxInputChars.toLocaleString()} characters` : 'none found'}` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · chunks of ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()} tokens`
               : 'Cannot be changed after the corpus is created. To use another model later, add a chunk set. Run Test limits on the Models tab to measure a model.'
@@ -2162,7 +2162,7 @@ function RevokeTokenModal({ token, onClose, onRevoked }: {
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
       <p className="mt-0 text-sm">
         {token.lastUsedUtc ? `It was last used ${relativeTime(token.lastUsedUtc)}. ` : 'It has never been used. '}
-        Anything using this key is refused from its next call. A revoked key cannot be restored: create a
+        Anything using this key is refused on its next call. A revoked key cannot be restored: create a
         new key for the agent.
       </p>
       <div className="flex gap-2 justify-end">
@@ -2254,7 +2254,7 @@ function FullReindexModal({
       <p className="mt-0 text-sm">
         Every {unitFor(corpus.sources, 1)} is read again, changed or not, and re-embedded if it can be read and
         chunked, in{' '}
-        {sets.length === 1 ? 'this corpus’s chunk set' : <>all {sets.length} of this corpus’s chunk sets</>}.
+        {sets.length === 1 ? 'this corpus’s chunk set' : <>each of this corpus’s {sets.length} chunk sets</>}.
         The corpus holds <strong>{chunks.toLocaleString()}</strong> {chunks === 1 ? 'chunk' : 'chunks'} today.
         Embedding is the slow part.
       </p>
@@ -2310,7 +2310,7 @@ function FullReindexModal({
         current model. The new set is built alongside this one and replaces it as the default when you
         promote it.{' '}
         <button type="button" className="underline underline-offset-2" onClick={onShowChunkSets}>
-          Add one under Chunk sets
+          Open Chunk sets
         </button>
         .
       </Notice>
@@ -2513,7 +2513,9 @@ export function JobsView({ corpora, live, onError }: { corpora: Corpus[]; live: 
 
             <div className="dim mt-1.5 text-xs flex gap-3.5 flex-wrap">
               <span>{merged.filesDone.toLocaleString()} indexed</span>
-              <span>{merged.filesSkipped.toLocaleString()} skipped</span>
+              <span title="Files unchanged since the last run, and files excluded, oversize or empty">
+                {merged.filesSkipped.toLocaleString()} unchanged or skipped
+              </span>
               {merged.filesFailed > 0 && <span className="text-[var(--danger-text)]">{merged.filesFailed.toLocaleString()} failed</span>}
               <span>{count(merged.chunksWritten, 'chunk')}</span>
             </div>
@@ -2765,7 +2767,7 @@ function ScopeField({ value, onChange }: { value: string[]; onChange: (scopes: s
 
 /**
  * What a key may do, replaced outright as the mapping is. The server drops its cached
- * principals, so a scope removed is refused from the agent's next call.
+ * principals, so a scope removed is refused on the agent's next call.
  */
 function ScopesModal({ token, onClose, onSaved }: {
   token: TokenSummary;
@@ -2792,7 +2794,7 @@ function ScopesModal({ token, onClose, onSaved }: {
         <p className="dim text-xs mt-3 mb-0">
           {scopes.length === 0
             ? 'A key needs at least one scope. To stop a key working, revoke it.'
-            : 'A removed scope is refused from the agent\'s next call. Tools from an added scope appear after the agent\'s client reconnects.'}
+            : 'A removed scope is refused on the agent\'s next call. Tools from an added scope appear after the agent\'s client reconnects.'}
         </p>
         <div className="flex gap-2 justify-end mt-4">
           <Button type="button" onClick={onClose}>Cancel</Button>

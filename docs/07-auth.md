@@ -86,7 +86,7 @@ belongs to the key.
   token service drops it from any key that reaches it another way.
 - Scopes can be changed after issue, on the Access page or with
   `PUT /api/tokens/{id}/scopes`, under the same rules. The change evicts cached principals,
-  so a scope removed is refused from the agent's next call. A key holds at least one scope:
+  so a scope removed is refused on the agent's next call. A key holds at least one scope:
   `PUT` with none answers 400 `No scope`, and a `POST /api/tokens` that names none issues
   `search`.
 - Optional expiry, set with `expiresInDays` on `POST /api/tokens` (0 to 36,500, where 0 is none;

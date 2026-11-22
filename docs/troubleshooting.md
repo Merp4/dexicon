@@ -117,7 +117,7 @@ Mounts are read-only by design; Dexicon does not write to source trees.
 ## "Everything is 401"
 
 - **No key**: `Provide a key: Authorization: Bearer dex_…, or sign in at / for the UI.`
-- **Revoked or expired**: a revoked key is refused from the next request. A key that has
+- **Revoked or expired**: a revoked key is refused on the next request. A key that has
   expired can still be accepted for up to 60 seconds, the lifetime of the principal cache.
 - **Lost a key**: there is nothing to recover. Sign in and issue another under
   **Access**, then revoke the old one. A key's secret is stored only as a PBKDF2 hash.

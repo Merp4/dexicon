@@ -2427,7 +2427,7 @@ describe('the chunk sets on a corpus page', () => {
     render(<CorpusDetail {...props} />);
     await userEvent.click(await screen.findByRole('button', { name: /Full reindex/ }));
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Add one under Chunk sets' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Chunk sets' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const toggle = screen.getByRole('button', { name: /Chunk sets/ });
@@ -2579,7 +2579,7 @@ describe('the full reindex', () => {
     // 131 + 135 across both sets, not the default's alone. Chunks sum honestly: each one
     // belongs to exactly one set.
     expect(within(dialog).getByText('266')).toBeInTheDocument();
-    expect(within(dialog).getByText(/all 2 of this corpus’s chunk sets/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/each of this corpus’s 2 chunk sets/)).toBeInTheDocument();
   });
 
   it('counts files per set rather than totalling them', async () => {

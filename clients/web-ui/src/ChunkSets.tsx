@@ -462,7 +462,7 @@ function ChunkSetModal({
         </Field>
       )}
 
-      <Field label="Description" hint="Optional. What this way of reading the corpus is for.">
+      <Field label="Description" hint="Optional. What this chunk set is for.">
         <Input value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
 
@@ -518,7 +518,7 @@ function ChunkSetModal({
           label="Chunk size (tokens)"
           hint={
             measured
-              ? `${chosenModel?.name.split(':')[0]} was measured at ${measured.maxInputChars?.toLocaleString() ?? 'no'} chars` +
+              ? `${chosenModel?.name.split(':')[0]} measured input limit ${measured.maxInputChars != null ? `${measured.maxInputChars.toLocaleString()} characters` : 'none found'}` +
                 `${measured.charsPerToken ? ` · ${measured.charsPerToken} chars/token` : ''}` +
                 ` · suggested ${usableChunkTokens(measured.recommendedChunkTokens).toLocaleString()}`
               : 'Estimated at four characters per token. Run Test limits on the Models tab to measure this model.'
@@ -561,7 +561,7 @@ function ChunkSetModal({
         </Notice>
       )}
 
-      <Field label="Boundary mode" hint="Size decides when to split; the boundary decides where.">
+      <Field label="Boundary mode" hint="Each chunk is filled to the chunk size, then cut at the last boundary of this kind inside it, if there is one.">
         <Select value={boundaryMode} onValueChange={setBoundaryMode}>
           <SelectItem value="language-aware">language-aware — member and declaration boundaries</SelectItem>
           <SelectItem value="blank-line">blank-line — paragraphs</SelectItem>
