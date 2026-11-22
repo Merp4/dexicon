@@ -3042,7 +3042,7 @@ hits, the first hit's score, the time taken, and whether the result was degraded
 it ran (an unknown corpus, an empty scope) is not a row. Rows wait in a bounded channel and a hosted service writes them in
 batches, so a search never waits on the catalogue. A row that the full channel or the catalogue refuses is counted and
 dropped. The Search history screen and `GET /api/searches` read the table. The endpoint needs the `admin` scope, lists newest
-first, pages by row id, and filters by key, corpus, surface and "found nothing" in the query.
+first, pages by row id, and filters by key, corpus, surface and "no results" in the query.
 
 | Variable | Default | Effect |
 |---|---|---|
