@@ -17,7 +17,7 @@ catalogue is authoritative and Qdrant is a derived view that can be rebuilt from
 |---|---|
 | **Key** | An agent's credential. Carries one or more of `search`, `ingest`, `configure`, `propose` and `destroy`, never `admin`, and maps to the corpora it may reach. |
 | **Proposal** | A removal an agent asked for and a person has yet to decide, or the record of how it was decided. Holds no foreign keys, so it outlives what it names. |
-| **Search log row** | One search that ran: who asked, by which surface, what, and how it went. Holds query text for the retention period ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record), [10](10-security-secrets.md#what-the-search-log-holds)). No foreign keys. |
+| **Search log row** | One search that ran: who asked, by which surface, what, and how it went. Holds the query text, unless `DEXICON__SEARCHLOG__STOREQUERYTEXT` is false, until retention removes the row ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record), [10](10-security-secrets.md#what-the-search-log-holds)). No foreign keys. |
 | **Corpus** | A named, searchable body of content. The unit of reindexing and of search scope. It has no owner: which keys reach it is a property of those keys. |
 | **Chunk set** | One way of cutting and embedding a corpus: a model, a vector space, a chunking strategy. A corpus carries one or more, over the same documents. Addressed as `corpus:set`. |
 | **Source** | Where a corpus gets its content: a `workspace` mount path, a `githistory` repository under a mount (its commits), or `upload` (files pushed through the UI/API). A corpus has one or more. |
@@ -75,7 +75,7 @@ The listing was compared with the `sqlite_master` of a catalogue created by the 
 migrations (through `KeyReachIsExplicit`) for table, column, nullability, type,
 foreign-key action and index. The four `chunk_sets` columns added after it
 (`ChunkSetsRecordAModelCanary` and `ChunkSetsRecordTheirFraming`, all nullable, no `DEFAULT`)
-were taken from those two migrations and the model snapshot.
+and the `search_log` table (`SearchesAreRecorded`) were taken from those migrations and the model snapshot.
 
 ```sql
 -- Identity ------------------------------------------------------------------
@@ -390,7 +390,7 @@ CREATE INDEX ix_proposals_target ON proposals(kind, target_id, status);
 
 -- One row for each search that ran (D-52). NO FOREIGN KEYS, as for proposals: the key and the
 -- corpora are copied in by the names they had then. Written off the request path by SearchLogWriter and
--- deleted after DEXICON__SEARCHLOG__RETENTIONDAYS days.
+-- deleted once a day after DEXICON__SEARCHLOG__RETENTIONDAYS days (0 or less keeps every row).
 CREATE TABLE search_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- arrival order; what a page of the list continues from
   at_utc      TEXT NOT NULL,

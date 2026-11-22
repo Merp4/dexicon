@@ -418,8 +418,9 @@ file faster anyway; this path exists for uploads and for agents without filesyst
 ## The search log
 
 Every search that returns a result leaves one row in the catalogue, written after the result is built and off the request
-path: the key, the surface (`mcp`, `api` or `context`), the corpora, the mode that ran, the query, the hit count, the first
-hit's score, the time taken, whether it was degraded and whether the result carried a note. A search refused before it ran leaves none. An administrator reads
+path: the key, the surface (`mcp`, `api` or `context`, or `other` for a caller that did not set one), the corpora, the mode that ran, the query, the hit count, the first
+hit's score, the time taken, whether it was degraded and whether the result carried a note. A search refused before it ran leaves none, and so does every search while `DEXICON__SEARCHLOG__ENABLED` is false. A row the
+queue (1,000 rows) or the catalogue cannot take is dropped and counted. An administrator reads
 the rows on the Search history screen ([08](08-ui.md#search-history)) or through `GET /api/searches`; the score is in the units of the
 mode that ran, so it is compared within a mode. What the rows hold, how long they stay and how to stop keeping the text are
 in [D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record) and

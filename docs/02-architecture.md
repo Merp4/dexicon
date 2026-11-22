@@ -47,7 +47,7 @@ additional failure mode without benefit. See
 | `WorkScheduler` | in-process queue, one dispatch rule | Holds pending work; hands out a slot when the type has one free and the corpus is idle |
 | `WorkerPool` | `BackgroundService`, one worker per slot | Runs sweeps, index passes and rebuilds; emits progress events |
 | `ScheduledRefreshService` | `BackgroundService` | Queues a refresh of each idle corpus every `DEXICON__INDEXING__REFRESHMINUTES`; off when 0, the default |
-| `SearchLogWriter` | `BackgroundService` | Writes the searches `SearchLog` queued, in batches, and deletes rows older than `DEXICON__SEARCHLOG__RETENTIONDAYS` once a day ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)) |
+| `SearchLogWriter` | `BackgroundService` | Writes the searches `SearchLog` queued, in batches, and deletes rows older than `DEXICON__SEARCHLOG__RETENTIONDAYS` once a day, unless it is 0 or less ([D-52](decisions.md#d-52-every-search-that-ran-is-recorded-and-an-administrator-can-read-the-record)) |
 | `ModelCanaryService` | `BackgroundService` | Every six hours (first check one minute after start), embeds a fixed sentence with each chunk set's model and compares it with the stored vector; records the document template of a set that has none. Advisory; `/healthz` reports the result ([D-46](decisions.md#d-46-a-chunk-set-records-what-its-model-answers-to-a-fixed-sentence), [D-47](decisions.md#d-47-a-chunk-set-records-the-document-template-it-was-embedded-with)) |
 | `Catalog` | EF Core + SQLite | Corpora, sources, files, jobs, keys and what each reaches |
 | `VectorStore` | `Qdrant.Client` (gRPC) | Collection lifecycle, upsert, query |

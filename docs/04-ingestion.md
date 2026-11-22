@@ -1362,9 +1362,9 @@ Accumulates whole lines up to `chunk_size` tokens with `chunk_overlap` carried i
 next chunk, so every chunk has an exact `start_line`/`end_line`. A line is split only when it is longer than the whole
 budget ([below](#no-chunk-exceeds-the-budget)).
 
-With `boundary_mode: language-aware`, the file is first split at member boundaries by
-language, then each segment is size-chunked. This keeps a method with its signature instead
-of slicing it at an arbitrary token count. The patterns are in `LanguageMap.Boundaries`. For the languages with a member pattern a
+With `boundary_mode: language-aware`, the chunker fills to the size budget and then backs up
+to the last member boundary in the buffer ([below](#size-decides-when-to-split-a-boundary-decides-where)),
+so a chunk holds whole members where they fit and a method stays with its signature. The patterns are in `LanguageMap.Boundaries`. For the languages with a member pattern a
 boundary is the member's signature line, so the comment and attribute lines above it belong to the segment before it. On the C# of
 this repository, one chunk holds a documented member's `///` block and its signature for 46.8% of such members at 256 tokens, 74.4% at
 512 and 91.7% at 1,024; attaching those lines to the member did not
