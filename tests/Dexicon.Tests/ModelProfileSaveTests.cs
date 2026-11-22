@@ -125,6 +125,7 @@ public sealed class ModelProfileSaveTests : IAsyncLifetime
         var saved = await SaveAsync("embeddinggemma:latest");
 
         saved.Reindexing.ShouldBe(["docs:default"]);
+        saved.Note.ShouldBe("1 chunk set is re-indexing, because a change of framing changes its vectors.");
         (await EffectiveAsync("embeddinggemma")).Apply(EmbedPurpose.Query, "x")
             .ShouldBe("task: custom | query: x", "the set records the untagged name, and that is what the indexer reads");
         (await EffectiveAsync("embeddinggemma")).Origin.ShouldBe(TemplateOrigin.Configured);

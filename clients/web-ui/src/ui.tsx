@@ -477,8 +477,9 @@ export function Badge({
 
 /**
  * A file's status as a badge shows it. The API's `empty` covers every file that produced no text (an empty file, a scanned
- * PDF, a binary upload, an upload refused as unreadable), and on its own it read as a file of zero bytes. Every other
- * status is shown as sent.
+ * PDF, a binary upload, an upload refused as unreadable), and on its own it read as a file of zero bytes. It also covers a
+ * file whose text the chunker turned into no chunks, which is rare; its status detail, shown beside the badge on the Files
+ * screen, says so. Every other status is shown as sent. The API and `index_status` keep the name `empty`.
  */
 export function fileStatusLabel(status: string): string {
   return status === 'empty' ? 'no text' : status;

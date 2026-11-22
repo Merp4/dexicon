@@ -751,7 +751,7 @@ public sealed class DexiconTools
             if (gap.Files.Count > 5)
                 sb.Append($"    ... and {gap.Files.Count - 5:N0} more\n");
 
-            sb.Append($"  Add a source on {where}, or move the file into one of its subfolders.\n");
+            sb.Append($"  Add a source on {where}, or move {(one ? "the file" : "the files")} into one of its subfolders.\n");
         }
 
         return sb.ToString();

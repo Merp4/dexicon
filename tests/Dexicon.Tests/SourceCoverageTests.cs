@@ -236,11 +236,11 @@ public sealed class SourceCoverageTests : IDisposable
             new SourceCoverage.Gap("books/manuals", ["An Invented Handbook.pdf"]),
         ]);
 
-        text.ShouldContain("NOT INDEXED");
-        text.ShouldContain("books/manuals");
+        text.ShouldContain(
+            "NOT INDEXED: 1 file in books/manuals is in no source, although its subfolders are. Search cannot return it.");
         text.ShouldContain("An Invented Handbook.pdf");
         // Without this an agent reads the line as a statistic rather than as something to fix.
-        text.ShouldContain("Add a source on books/manuals");
+        text.ShouldContain("Add a source on books/manuals, or move the file into one of its subfolders.");
     }
 
     [Fact]
@@ -251,6 +251,7 @@ public sealed class SourceCoverageTests : IDisposable
         var text = DexiconTools.RenderCoverage([new SourceCoverage.Gap("books/manuals", files)]);
 
         text.ShouldContain("12 files in books/manuals are in no source, although its subfolders are. Search cannot return them.");
+        text.ShouldContain("or move the files into one of its subfolders.");
         text.ShouldContain("book-05.pdf");
         text.ShouldNotContain("book-06.pdf");
         text.ShouldContain("and 7 more");
