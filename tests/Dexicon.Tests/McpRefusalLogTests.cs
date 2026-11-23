@@ -99,11 +99,13 @@ public sealed class McpRefusalLogTests : IDisposable
     [Fact]
     public async Task ARefusedToolCallReachesTheCallerAsBeforeAndIsNotLoggedAsAnError()
     {
+        // Before the host starts, as HostLoggingTests does, so the logger built at startup writes here.
+        var captured = new StringWriter();
+        Console.SetOut(captured);
         await using var factory = Start();
         using var client = factory.CreateClient();
         var token = await SignInAsync(client);
-        var captured = new StringWriter();
-        Console.SetOut(captured);
+        var before = captured.ToString().Length;
 
         // Refused in the tool body: a corpus nobody has.
         var unknown = await CallAsync(client, token, """{"name":"search_index","arguments":{"query":"x","corpus":"nosuch"}}""");
@@ -116,10 +118,17 @@ public sealed class McpRefusalLogTests : IDisposable
         shape.GetProperty("isError").GetBoolean().ShouldBeTrue();
         ToolText(shape).ShouldBe("An error occurred invoking 'search_index': corpus takes a name or a list of names, not a number.");
 
-        var lines = TestText.Lines(captured.ToString());
-        lines.ShouldNotContain(l => l.Contains(" ERR]", StringComparison.Ordinal));
+        // What was written from the first call on. The host's vector store and embedder are unreachable on purpose,
+        // and its startup logs errors about them, so the check is for the SDK's line about a tool, not for any error.
+        var text = captured.ToString()[before..];
+        var lines = TestText.Lines(text);
+        // The control: the two calls' request lines, written by Dexicon's own middleware. Without them the capture
+        // caught nothing and the absence of the error line below would prove nothing.
+        lines.Count(l => l.Contains("\"POST\" \"/mcp\" -> 200", StringComparison.Ordinal)).ShouldBe(2, text);
+        lines.ShouldNotContain(l => l.Contains("threw an unhandled exception", StringComparison.Ordinal), text);
+        text.ShouldNotContain("McpException", Case.Sensitive, text);
         // The SDK's template quotes the name and the console's JSON rendering quotes it again.
-        lines.Count(l => l.Contains("INF] \"\"search_index\"\" completed. IsError = true.", StringComparison.Ordinal)).ShouldBe(2);
+        lines.Count(l => l.Contains("INF] \"\"search_index\"\" completed. IsError = true.", StringComparison.Ordinal)).ShouldBe(2, text);
     }
 
     [Fact]
