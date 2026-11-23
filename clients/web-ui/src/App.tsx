@@ -1374,6 +1374,11 @@ export function CorpusDetail({
 
   if (!corpus) return <Empty title="Loading…" />;
 
+  // Every file the name filter searches. The list joins each file of the corpus's sources to the set's state, so
+  // it includes files with no state yet; a source's `fileCount` counts those same files. `corpus.fileCount` is the
+  // indexed ones only, and the "searched all" hint said 6 for a corpus of 13 whose other 7 had no text.
+  const filesInCorpus = corpus.sources.reduce((n, s) => n + (s.fileCount ?? 0), 0);
+
   const problems = (files ?? []).filter((f) => f.status !== 'indexed');
 
   // The server decided both which rows match and their order, so this is the page and
@@ -1658,7 +1663,7 @@ export function CorpusDetail({
             title={filter === 'empty'
               ? `No ${unitFor(corpus.sources, 1)} without text matches that`
               : `No ${filter ? `${filter} ` : ''}${unitFor(corpus.sources, 1)} matches that`}
-            hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
+            hint={`Searched all ${filesInCorpus.toLocaleString()} ${unitFor(corpus.sources, filesInCorpus)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">

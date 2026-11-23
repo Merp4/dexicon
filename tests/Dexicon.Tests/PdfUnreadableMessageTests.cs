@@ -53,6 +53,27 @@ public sealed class PdfUnreadableMessageTests
         ex.Message.ShouldBe(
             "'corrupt.pdf' is incomplete or damaged: the end of the PDF is missing, which usually means a download "
             + "or copy was cut short. Download or copy it again. "
-            + $"(Not parsed: the last {truncated.Length} of its {truncated.Length} bytes do not hold both startxref and %%EOF.)");
+            + $"(Not parsed: its {truncated.Length} bytes do not hold both startxref and %%EOF.)");
+    }
+
+    [Fact]
+    public void AOneBytePdfSaysOneByte()
+    {
+        var ex = Should.Throw<UnreadableDocumentException>(() =>
+            new PdfTextExtractor().Extract(new MemoryStream("%"u8.ToArray()), "one.pdf"));
+
+        ex.Message.ShouldEndWith("(Not parsed: its one byte does not hold both startxref and %%EOF.)");
+    }
+
+    [Fact]
+    public void ATruncatedPdfLongerThanTheTailSaysHowMuchOfItWasRead()
+    {
+        // Past 4,096 bytes only the tail is read, and the message says which part.
+        var truncated = Encoding.ASCII.GetBytes("%PDF-1.4\n" + new string('x', 10_000));
+
+        var ex = Should.Throw<UnreadableDocumentException>(() =>
+            new PdfTextExtractor().Extract(new MemoryStream(truncated), "cut.pdf"));
+
+        ex.Message.ShouldEndWith("(Not parsed: the last 4,096 of its 10,009 bytes do not hold both startxref and %%EOF.)");
     }
 }

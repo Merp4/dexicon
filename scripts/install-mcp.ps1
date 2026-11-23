@@ -99,10 +99,31 @@ function Get-ConfigPath([string]$client, [string]$scope, [string]$projectDir) {
     'claude-desktop' {
       if ($IsMacOS)     { Join-Path $HOME 'Library/Application Support/Claude/claude_desktop_config.json' }
       elseif ($IsLinux) { Join-Path $HOME '.config/Claude/claude_desktop_config.json' }
-      else              { Join-Path $env:APPDATA 'Claude/claude_desktop_config.json' }
+      else              { Get-ClaudeDesktopWindowsConfig }
     }
     default { $null }
   }
+}
+
+# The Microsoft Store build of Claude Desktop keeps its data in %LOCALAPPDATA%\Claude-Data\claude_<id> and leaves
+# only a marker file, .user-data-left.claude_<id>, in %APPDATA%\Claude. A config written to %APPDATA%\Claude there
+# is never read. Measured on the Store build 4.23118 on 2026-11-22. Without the marker, or when the folder it names
+# does not exist, the config is the one in %APPDATA%\Claude.
+function Get-ClaudeDesktopWindowsConfig {
+  $roaming = Join-Path $env:APPDATA 'Claude'
+  # The id becomes a folder name, so only the shape measured (claude_ and letters or digits) is followed. A
+  # reinstall can leave a second marker; of the folders that exist, the one written most recently is the app's.
+  $moved = if ($env:LOCALAPPDATA) {
+    Get-ChildItem -LiteralPath $roaming -Filter '.user-data-left.*' -Force -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.Name.Substring('.user-data-left.'.Length) } |
+      Where-Object { $_ -match '^claude_[A-Za-z0-9]+$' } |
+      ForEach-Object { Get-Item -LiteralPath (Join-Path $env:LOCALAPPDATA (Join-Path 'Claude-Data' $_)) -ErrorAction SilentlyContinue } |
+      Where-Object { $_.PSIsContainer } |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
+  }
+  if ($moved) { return Join-Path $moved.FullName 'claude_desktop_config.json' }
+  Join-Path $roaming 'claude_desktop_config.json'
 }
 
 function Test-IsBridged([string]$client) { $client -in @('claude-desktop', 'zed') }
@@ -593,6 +614,20 @@ if (-not $path) {
 $rootKey = Get-RootKey $Client
 $entry = Get-ServerEntry $Client $Url $Token
 
+# A running Claude Desktop writes its config back from its own copy when a preference changes, which drops an
+# entry added meanwhile (measured on the Store build 4.23118). Its process is told from Claude Code's claude.exe
+# by its folder: the Store build runs from WindowsApps\Claude_* (measured). AnthropicClaude is the installer build's
+# folder name and was not measured, so on that build the check may not see the app. Windows only.
+if ($Client -eq 'claude-desktop' -and $IsWindows) {
+  $desktop = Get-Process -Name 'claude' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -match '\\WindowsApps\\Claude_|\\AnthropicClaude\\' }
+  if ($desktop) {
+    Warn "`n  Claude Desktop is running. It writes this file back from its own copy when a preference changes,"
+    Warn "  which would drop the entry. Quit it (including from the notification area) and run this again."
+    if (-not $WhatIfPreference) { exit 1 }
+  }
+}
+
 $config = [ordered]@{}
 if (Test-Path $path) {
   $existing = Get-Content $path -Raw
@@ -615,12 +650,16 @@ if (-not $config.Contains($rootKey)) { $config[$rootKey] = @{} }
 $replacing = [bool]$config[$rootKey][$Name]
 $config[$rootKey][$Name] = $entry
 
-$json = $config | ConvertTo-Json -Depth 10
+# 100, the most ConvertTo-Json takes. Past -Depth it writes a nested object as its type name, and Claude
+# Desktop's file holds the app's own preferences, 8 levels deep on 2026-11-22.
+$json = $config | ConvertTo-Json -Depth 100
 
 if (-not $PSCmdlet.ShouldProcess($path, $(if ($replacing) { "replace '$Name'" } else { "add '$Name'" }))) {
-  Info "would write $path :"
+  # The entry only. The rest of the file is other servers' entries, whose keys and passwords this script
+  # does not print, and it is written back with the same content.
+  Info "would write $path, with this entry under '$rootKey' and the file's other content kept:"
   Write-Host ''
-  (Hide-Token $json $Token) -split "`r?`n" | ForEach-Object { Info "  $_" }
+  (Hide-Token ([ordered]@{ $Name = $entry } | ConvertTo-Json -Depth 100) $Token) -split "`r?`n" | ForEach-Object { Info "  $_" }
   Write-Host ''
   exit 0
 }
@@ -645,7 +684,8 @@ if (Test-IsBridged $Client) {
   Warn "`n  $Client cannot take a URL directly, so this uses 'npx mcp-remote' as a stdio bridge."
   Info "npx must be on PATH, and the first launch downloads mcp-remote."
   if ($Client -eq 'claude-desktop') {
-    Info "Settings -> Connectors -> add custom connector skips the bridge, and is the path Anthropic maintains."
+    Info "A custom connector (Settings -> Connectors) is called from Anthropic's cloud, so it reaches Dexicon only at a"
+    Info "public HTTPS address on port 443, not at localhost."
   }
 }
 

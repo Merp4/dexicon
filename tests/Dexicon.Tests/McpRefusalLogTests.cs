@@ -1,0 +1,152 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using Dexicon.Core.Configuration;
+using Dexicon.Mcp;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+
+namespace Dexicon.Tests;
+
+/// <summary>
+/// A tool's refusal of what the caller sent reaches the caller as before and is not logged as an error. Before
+/// <see cref="McpRefusals"/>, an unknown corpus name wrote '"search_index" threw an unhandled exception.' at Error
+/// with a stack trace, on a live instance where the only error entries after a deploy were two such calls.
+/// </summary>
+[Collection(ConsoleOutputCollection.Name)]
+public sealed class McpRefusalLogTests : IDisposable
+{
+    private const string Password = "a-test-password-for-this-run";
+
+    private readonly string _data = Path.Combine(Path.GetTempPath(), $"dexicon-host-{Guid.NewGuid():N}");
+    private readonly Dictionary<string, string?> _saved = [];
+    private readonly TextWriter _console = Console.Out;
+
+    private void Set(string name, string? value)
+    {
+        if (!_saved.ContainsKey(name)) _saved[name] = Environment.GetEnvironmentVariable(name);
+        Environment.SetEnvironmentVariable(name, value);
+    }
+
+    private WebApplicationFactory<Program> Start()
+    {
+        Directory.CreateDirectory(_data);
+        Set("DEXICON__STORAGE__DATAPATH", _data);
+        Set("DEXICON__QDRANT__ENDPOINT", "http://127.0.0.1:1");
+        Set("DEXICON__OLLAMA__ENDPOINT", "http://127.0.0.1:1");
+        Set("DEXICON__OLLAMA__MAXRETRIES", "0");
+        Set("DEXICON__INDEXING__REFRESHMINUTES", "0");
+        Set("DEXICON__ADMIN__PASSWORD", Password);
+
+        return new WebApplicationFactory<Program>();
+    }
+
+    public void Dispose()
+    {
+        Console.SetOut(_console);
+        Serilog.Log.CloseAndFlush();
+        foreach (var (name, value) in _saved) Environment.SetEnvironmentVariable(name, value);
+        SqliteConnection.ClearPool(new SqliteConnection($"Data Source={new StorageOptions { DataPath = _data }.CatalogPath}"));
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(_data)) Directory.Delete(_data, recursive: true);
+                break;
+            }
+            catch (IOException) when (attempt < 5)
+            {
+                Thread.Sleep(100 * attempt);
+            }
+        }
+    }
+
+    private static async Task<string> SignInAsync(HttpClient client)
+    {
+        var login = await client.PostAsJsonAsync("/api/session", new { password = Password }, TestContext.Current.CancellationToken);
+        login.EnsureSuccessStatusCode();
+        return (await login.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken))
+            .GetProperty("token").GetString()!;
+    }
+
+    /// <summary>One <c>tools/call</c> to the MCP endpoint, without a handshake, and the <c>result</c> of its reply.</summary>
+    private static async Task<JsonElement> CallAsync(HttpClient client, string token, string parameters)
+    {
+        using var content = new StringContent(
+            $$"""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{parameters}}}""", Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = content };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var json = text.TrimStart().StartsWith('{')
+            ? text
+            : string.Join('\n', text.Split('\n').Where(l => l.StartsWith("data:", StringComparison.Ordinal)).Select(l => l[5..].Trim()));
+        return JsonDocument.Parse(json).RootElement.GetProperty("result").Clone();
+    }
+
+    private static string ToolText(JsonElement result) =>
+        string.Concat(result.GetProperty("content").EnumerateArray().Select(c => c.GetProperty("text").GetString()));
+
+    [Fact]
+    public async Task ARefusedToolCallReachesTheCallerAsBeforeAndIsNotLoggedAsAnError()
+    {
+        // Before the host starts, as HostLoggingTests does, so the logger built at startup writes here.
+        var captured = new StringWriter();
+        Console.SetOut(captured);
+        await using var factory = Start();
+        using var client = factory.CreateClient();
+        var token = await SignInAsync(client);
+        var before = captured.ToString().Length;
+
+        // Refused in the tool body: a corpus nobody has.
+        var unknown = await CallAsync(client, token, """{"name":"search_index","arguments":{"query":"x","corpus":"nosuch"}}""");
+        // Refused while the arguments are bound, before the tool body runs.
+        var shape = await CallAsync(client, token, """{"name":"search_index","arguments":{"query":"x","corpus":7}}""");
+
+        unknown.GetProperty("isError").GetBoolean().ShouldBeTrue();
+        ToolText(unknown).ShouldStartWith("An error occurred invoking 'search_index': ");
+        ToolText(unknown).ShouldContain("'nosuch'");
+        shape.GetProperty("isError").GetBoolean().ShouldBeTrue();
+        ToolText(shape).ShouldBe("An error occurred invoking 'search_index': corpus takes a name or a list of names, not a number.");
+
+        // What was written from the first call on. The host's vector store and embedder are unreachable on purpose,
+        // and its startup logs errors about them, so the check is for the SDK's line about a tool, not for any error.
+        var text = captured.ToString()[before..];
+        var lines = TestText.Lines(text);
+        // The control: the two calls' request lines, written by Dexicon's own middleware. Without them the capture
+        // caught nothing and the absence of the error line below would prove nothing.
+        lines.Count(l => l.Contains("\"POST\" \"/mcp\" -> 200", StringComparison.Ordinal)).ShouldBe(2, text);
+        lines.ShouldNotContain(l => l.Contains("threw an unhandled exception", StringComparison.Ordinal), text);
+        text.ShouldNotContain("McpException", Case.Sensitive, text);
+        // The SDK's template quotes the name and the console's JSON rendering quotes it again.
+        lines.Count(l => l.Contains("INF] \"\"search_index\"\" completed. IsError = true.", StringComparison.Ordinal)).ShouldBe(2, text);
+    }
+
+    [Fact]
+    public void ARefusalGetsTheTextTheSdkWritesForOne()
+    {
+        var result = McpRefusals.AsResult("get_context", new McpException("No indexed file 'a.md' in corpus 'docs'."));
+
+        result.ShouldNotBeNull().IsError.ShouldBe(true);
+        result.Content.OfType<TextContentBlock>().ShouldHaveSingleItem().Text
+            .ShouldBe("An error occurred invoking 'get_context': No indexed file 'a.md' in corpus 'docs'.");
+    }
+
+    [Fact]
+    public void AFaultAndAProtocolErrorGoOnToTheSdk()
+    {
+        // A fault is logged at Error by the SDK, and a protocol error is answered as a JSON-RPC error.
+        McpRefusals.AsResult("search_index", new InvalidOperationException("the store went away")).ShouldBeNull();
+        McpRefusals.AsResult("search_index", new McpProtocolException("Unknown tool", McpErrorCode.InvalidParams)).ShouldBeNull();
+        McpRefusals.AsResult("search_index", new OperationCanceledException()).ShouldBeNull();
+    }
+}
