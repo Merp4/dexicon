@@ -494,6 +494,17 @@ empty, which is what the caller saw. Measured against a running instance:
 That last one is the difference between an agent concluding "this codebase has no auth
 code" and an agent waiting thirty seconds.
 
+A tool's `McpException`, whether from the tool body or from binding its arguments, is answered
+by a call-tool filter (`Mcp/McpRefusals.cs`) with the text above and logged at Debug, as the
+REST surface logs its refusals (`ScopeExceptionHandler`). The SDK then logs the call at
+Information as `"search_index" completed. IsError = true.` Any other exception, apart from a
+cancelled call, is logged by the SDK at Error with its stack trace, as
+`"search_index" threw an unhandled exception.` A
+resource read keeps that Error entry for a refusal too, because the SDK logs a resource's
+exception and rethrows it as the JSON-RPC error. Since the filter writes the SDK's text itself,
+check after a `ModelContextProtocol` upgrade that the SDK still writes
+`An error occurred invoking '<tool>': <message>` (`CreateToolCallErrorResult` in `McpServerImpl`).
+
 ## Version handling
 
 Measured against `ModelContextProtocol.AspNetCore` 2.2.0:

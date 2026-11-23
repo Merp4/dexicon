@@ -186,6 +186,10 @@ builder.Services.Configure<McpServerOptions>(o =>
         return result;
     }));
 
+// A tool's refusal of the caller's input is answered as the SDK answers it, and logged at Debug rather than as
+// an unhandled exception at Error. See Mcp/McpRefusals.cs.
+builder.Services.Configure<McpServerOptions>(o => o.Filters.Request.CallToolFilters.Add(McpRefusals.Filter));
+
 builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 
 // Kestrel's stock 30 MB request cap stays on for every endpoint EXCEPT the document

@@ -49,4 +49,25 @@ public sealed class CatalogQueryWarningTests
         job.FilesDone.ShouldBeGreaterThan(0, "the pass read the file, so the query that loads the corpus has run");
         log.Warnings.ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task ReadingAFileBackByItsPathLogsNoWarning()
+    {
+        // get_context and the reason for an empty result look a file up by its path, taking two rows to tell one
+        // file from a path that two sources share. Without an order, Entity Framework Core warned that the rows
+        // a row limit returns are unpredictable, once per process on the first get_context.
+        var log = new WarningLog();
+        await using var harness = await IndexingHarness.StartWithLogsAsync(log);
+        await harness.SeedCorpusAsync(SourceKind.Workspace);
+        await harness.WriteFileAsync("note.md", IndexingHarness.Prose("alpha"));
+        (await harness.RunIndexAsync(cancel: TestContext.Current.CancellationToken)).State.ShouldBe(JobState.Succeeded);
+
+        await using var db = harness.NewContext();
+        var reader = new Dexicon.Core.Documents.DocumentReader(db);
+        var status = await reader.StatusAtAsync(IndexingHarness.CorpusId, "set-1", "note.md", TestContext.Current.CancellationToken);
+        await reader.ForAsync(IndexingHarness.CorpusId, "set-1", "note.md", sourceId: null, TestContext.Current.CancellationToken);
+
+        status.ShouldNotBeNull("the path names one file, so the lookup found it").Status.ShouldBe(FileStatus.Indexed);
+        log.Warnings.ShouldBeEmpty();
+    }
 }

@@ -516,10 +516,12 @@ public sealed partial class PdfTextExtractor : ITextExtractor
         var span = tail.AsSpan();
         if (span.IndexOf("%%EOF"u8) >= 0 && span.IndexOf("startxref"u8) >= 0) return;
 
+        // A file no longer than the tail was read whole, and "the last 343 of its 343 bytes" said so twice.
+        var read = take == length ? $"its {length:N0} bytes" : $"the last {take:N0} of its {length:N0} bytes";
         throw new UnreadableDocumentException(
             $"'{fileName}' is incomplete or damaged: the end of the PDF is missing, which usually means a "
             + "download or copy was cut short. Download or copy it again. "
-            + $"(Not parsed: the last {take:N0} of its {length:N0} bytes do not hold both startxref and %%EOF.)");
+            + $"(Not parsed: {read} do not hold both startxref and %%EOF.)");
     }
 
     /// <summary>

@@ -1374,6 +1374,12 @@ export function CorpusDetail({
 
   if (!corpus) return <Empty title="Loading…" />;
 
+  // Every file the list can show, in the default set it lists: `fileCount` is the indexed ones only, so the
+  // "searched all" hint said 6 for a corpus of 13 whose other 7 had no text. `skippedCount` holds skipped and
+  // empty files (CorpusEndpoints). A file the set has no state for yet is listed as pending and is not in
+  // these counts, so during a sweep the figure can be lower than the list.
+  const filesInCorpus = corpus.fileCount + corpus.skippedCount + corpus.failedCount + corpus.pendingCount;
+
   const problems = (files ?? []).filter((f) => f.status !== 'indexed');
 
   // The server decided both which rows match and their order, so this is the page and
@@ -1658,7 +1664,7 @@ export function CorpusDetail({
             title={filter === 'empty'
               ? `No ${unitFor(corpus.sources, 1)} without text matches that`
               : `No ${filter ? `${filter} ` : ''}${unitFor(corpus.sources, 1)} matches that`}
-            hint={`Searched all ${corpus.fileCount.toLocaleString()} ${unitFor(corpus.sources, corpus.fileCount)} in this corpus. Clear the filter to see them.`}
+            hint={`Searched all ${filesInCorpus.toLocaleString()} ${unitFor(corpus.sources, filesInCorpus)} in this corpus. Clear the filter to see them.`}
           />
         ) : (
           <div className="card overflow-hidden">

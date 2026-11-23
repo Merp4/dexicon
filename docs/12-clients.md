@@ -173,12 +173,14 @@ Edit through the MCP Servers panel, or the settings JSON directly:
 dropped, or causes the app to fail on startup, with nothing explaining why. A
 configuration that appears correct and does nothing is difficult to diagnose.
 
-Two working options.
+**A custom connector does not reach a local Dexicon.** Settings → Connectors → Add custom
+connector makes its calls from Anthropic's cloud, so the server has to be reachable from the
+public internet over HTTPS on port 443
+([Anthropic's help article](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp)).
+`docker-compose.yml` publishes Dexicon on `127.0.0.1:8477`. A server in
+`claude_desktop_config.json` runs on your machine, so it reaches that address.
 
-**Custom connector (preferred).** Settings → Connectors → Add custom connector, then the URL
-and header. No file editing, and it is the path Anthropic maintains.
-
-**`mcp-remote` as a stdio bridge**, if you would rather keep it in the file:
+**`mcp-remote` as a stdio bridge:**
 
 ```json
 {
@@ -199,13 +201,27 @@ and header. No file editing, and it is the path Anthropic maintains.
 `--header` on the first colon, and a space ends up inside the header value, which the server
 rejects as a malformed token.
 
+`npx -y mcp-remote` runs the newest release of `mcp-remote` each time the app starts. To keep a
+new release from changing the bridge, name a version, such as `mcp-remote@0.16.7`.
+
 Config file location:
 
 | OS | Path |
 |---|---|
 | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Windows, Microsoft Store build | `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json` |
 | Linux | `~/.config/Claude/claude_desktop_config.json` |
+
+The Microsoft Store build keeps only a marker file, `.user-data-left.claude_<id>`, in
+`%APPDATA%\Claude`, and a config written there is not read. The installer follows the marker to
+the folder it names. Measured on the Store build 4.23118.
+
+**Quit Claude Desktop before editing the file, and start it again afterwards.** The app reads the
+file when it starts, and while it runs it writes the file back from its own copy when one of its
+preferences changes, which drops an entry added in the meantime. Measured on the Store build
+4.23118: an entry added at 23:50 was gone at 23:52, when the app saved two changed preferences.
+Claude Code does not read this file: its servers are in `~/.claude.json`.
 
 ### Zed
 
@@ -251,7 +267,10 @@ Two things that trip people up with any client:
 
 It merges into an existing config rather than replacing it, backs the file up first, and
 prints the file and URL it wrote with the key masked as `dex_***`. `-WhatIf` shows the
-change (the JSON, or for Claude Code the command, key masked) without making it.
+change (the entry it adds, or for Claude Code the command, key masked) without making it; the
+file's other entries are not printed, since they can hold other servers' keys. For Claude
+Desktop on Windows it stops while the app is running, for the reason under
+[Claude Desktop](#claude-desktop).
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout. `-Url` replaces the default endpoint,
 `http://localhost:8477/mcp`, for an agent that reaches Dexicon at another address (see

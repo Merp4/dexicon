@@ -2300,6 +2300,19 @@ describe('the file list', () => {
     expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
   });
 
+  it('counts the skipped, failed and pending files among those searched', async () => {
+    // A corpus of 6 indexed files and 7 without text said "Searched all 6 files", while the name filter had
+    // looked at all 13.
+    getCorpus.mockResolvedValue(corpus({ fileCount: 6, skippedCount: 7, failedCount: 2, pendingCount: 3 }));
+    listFiles.mockResolvedValue({ total: 0, chunkSet: 'default', files: [] });
+
+    render(<CorpusDetail {...props} />);
+    await userEvent.type(await screen.findByLabelText('Filter files by name'), 'zzz');
+
+    expect(await screen.findByText('No file matches that')).toBeInTheDocument();
+    expect(screen.getByText(/Searched all 18 files in this corpus/)).toBeInTheDocument();
+  });
+
   it('says a status tab is empty as news, not as a search gone wrong', async () => {
     // "No file matches that. Clear the filter to see them." under the failed tab of a
     // corpus where nothing failed.

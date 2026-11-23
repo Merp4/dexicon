@@ -129,8 +129,9 @@ public sealed class DocumentReader(CatalogDbContext db)
 
         if (sourceId is { Length: > 0 }) q = q.Where(f => f.SourceId == sourceId);
 
-        // Two, so "more than one" can be told from "one" without counting the whole set.
-        var matches = await q.Take(2).ToListAsync(ct);
+        // Two, so "more than one" can be told from "one" without counting the whole set. Ordered, although
+        // which two come back does not matter, because Entity Framework Core warns on a row limit without one.
+        var matches = await q.OrderBy(f => f.Id).Take(2).ToListAsync(ct);
         return matches.Count == 1 ? matches[0] : null;
     }
 
