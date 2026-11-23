@@ -1374,11 +1374,10 @@ export function CorpusDetail({
 
   if (!corpus) return <Empty title="Loading…" />;
 
-  // Every file the list can show, in the default set it lists: `fileCount` is the indexed ones only, so the
-  // "searched all" hint said 6 for a corpus of 13 whose other 7 had no text. `skippedCount` holds skipped and
-  // empty files (CorpusEndpoints). A file the set has no state for yet is listed as pending and is not in
-  // these counts, so during a sweep the figure can be lower than the list.
-  const filesInCorpus = corpus.fileCount + corpus.skippedCount + corpus.failedCount + corpus.pendingCount;
+  // Every file the name filter searches. The list joins each file of the corpus's sources to the set's state, so
+  // it includes files with no state yet; a source's `fileCount` counts those same files. `corpus.fileCount` is the
+  // indexed ones only, and the "searched all" hint said 6 for a corpus of 13 whose other 7 had no text.
+  const filesInCorpus = corpus.sources.reduce((n, s) => n + (s.fileCount ?? 0), 0);
 
   const problems = (files ?? []).filter((f) => f.status !== 'indexed');
 

@@ -177,7 +177,7 @@ configuration that appears correct and does nothing is difficult to diagnose.
 connector makes its calls from Anthropic's cloud, so the server has to be reachable from the
 public internet over HTTPS on port 443
 ([Anthropic's help article](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp)).
-`docker-compose.yml` publishes Dexicon on `127.0.0.1:8477`. A server in
+`docker-compose.yml` publishes Dexicon on `127.0.0.1:8477` by default (`DEXICON_BIND`). A server in
 `claude_desktop_config.json` runs on your machine, so it reaches that address.
 
 **`mcp-remote` as a stdio bridge:**
@@ -215,12 +215,14 @@ Config file location:
 
 The Microsoft Store build keeps only a marker file, `.user-data-left.claude_<id>`, in
 `%APPDATA%\Claude`, and a config written there is not read. The installer follows the marker to
-the folder it names. Measured on the Store build 4.23118.
+the folder it names when the id is `claude_` and letters or digits and the folder exists (the
+folder written most recently, when several markers qualify), and otherwise writes to
+`%APPDATA%\Claude`. Measured on the Store build 4.23118.
 
 **Quit Claude Desktop before editing the file, and start it again afterwards.** The app reads the
-file when it starts, and while it runs it writes the file back from its own copy when one of its
-preferences changes, which drops an entry added in the meantime. Measured on the Store build
-4.23118: an entry added at 23:50 was gone at 23:52, when the app saved two changed preferences.
+file when it starts. On the Store build 4.23118 it also wrote the file back from its own copy
+while running: an entry added at 23:50 was gone at 23:52, when the app saved two changed
+preferences. One observation, on one machine, so treat any running app as able to do the same.
 Claude Code does not read this file: its servers are in `~/.claude.json`.
 
 ### Zed
@@ -269,8 +271,8 @@ It merges into an existing config rather than replacing it, backs the file up fi
 prints the file and URL it wrote with the key masked as `dex_***`. `-WhatIf` shows the
 change (the entry it adds, or for Claude Code the command, key masked) without making it; the
 file's other entries are not printed, since they can hold other servers' keys. For Claude
-Desktop on Windows it stops while the app is running, for the reason under
-[Claude Desktop](#claude-desktop).
+Desktop on Windows, while the app is running, it exits without writing, for the reason under
+[Claude Desktop](#claude-desktop); with `-WhatIf` it warns and shows the entry.
 `-Project` is the directory to write into for project scope, defaulting to the current one
 rather than the Dexicon checkout. `-Url` replaces the default endpoint,
 `http://localhost:8477/mcp`, for an agent that reaches Dexicon at another address (see

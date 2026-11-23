@@ -500,8 +500,8 @@ REST surface logs its refusals (`ScopeExceptionHandler`). The SDK then logs the 
 Information as `"search_index" completed. IsError = true.` Any other exception, apart from a
 cancelled call, is logged by the SDK at Error with its stack trace, as
 `"search_index" threw an unhandled exception.` A
-resource read keeps that Error entry for a refusal too, because the SDK logs a resource's
-exception and rethrows it as the JSON-RPC error. Since the filter writes the SDK's text itself,
+refused resource read is still logged at Error, as `ReadResource "<uri>" threw an unhandled exception.`,
+because the SDK logs a resource's exception and rethrows it as the JSON-RPC error. Since the filter writes the SDK's text itself,
 check after a `ModelContextProtocol` upgrade that the SDK still writes
 `An error occurred invoking '<tool>': <message>` (`CreateToolCallErrorResult` in `McpServerImpl`).
 

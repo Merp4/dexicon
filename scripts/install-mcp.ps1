@@ -111,14 +111,18 @@ function Get-ConfigPath([string]$client, [string]$scope, [string]$projectDir) {
 # does not exist, the config is the one in %APPDATA%\Claude.
 function Get-ClaudeDesktopWindowsConfig {
   $roaming = Join-Path $env:APPDATA 'Claude'
-  $marker = Get-ChildItem -LiteralPath $roaming -Filter '.user-data-left.*' -Force -ErrorAction SilentlyContinue |
-    Select-Object -First 1
-  # The id becomes a folder name, so only the shape measured (claude_ and letters or digits) is followed.
-  $id = if ($marker) { $marker.Name.Substring('.user-data-left.'.Length) } else { '' }
-  if ($id -match '^claude_[A-Za-z0-9]+$' -and $env:LOCALAPPDATA) {
-    $moved = Join-Path $env:LOCALAPPDATA (Join-Path 'Claude-Data' $id)
-    if (Test-Path -LiteralPath $moved -PathType Container) { return Join-Path $moved 'claude_desktop_config.json' }
+  # The id becomes a folder name, so only the shape measured (claude_ and letters or digits) is followed. A
+  # reinstall can leave a second marker; of the folders that exist, the one written most recently is the app's.
+  $moved = if ($env:LOCALAPPDATA) {
+    Get-ChildItem -LiteralPath $roaming -Filter '.user-data-left.*' -Force -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.Name.Substring('.user-data-left.'.Length) } |
+      Where-Object { $_ -match '^claude_[A-Za-z0-9]+$' } |
+      ForEach-Object { Get-Item -LiteralPath (Join-Path $env:LOCALAPPDATA (Join-Path 'Claude-Data' $_)) -ErrorAction SilentlyContinue } |
+      Where-Object { $_.PSIsContainer } |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
   }
+  if ($moved) { return Join-Path $moved.FullName 'claude_desktop_config.json' }
   Join-Path $roaming 'claude_desktop_config.json'
 }
 
@@ -612,8 +616,8 @@ $entry = Get-ServerEntry $Client $Url $Token
 
 # A running Claude Desktop writes its config back from its own copy when a preference changes, which drops an
 # entry added meanwhile (measured on the Store build 4.23118). Its process is told from Claude Code's claude.exe
-# by its folder: the Store build runs from WindowsApps\Claude_*, the installer build from AnthropicClaude. Windows
-# only, where it was measured.
+# by its folder: the Store build runs from WindowsApps\Claude_* (measured). AnthropicClaude is the installer build's
+# folder name and was not measured, so on that build the check may not see the app. Windows only.
 if ($Client -eq 'claude-desktop' -and $IsWindows) {
   $desktop = Get-Process -Name 'claude' -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -match '\\WindowsApps\\Claude_|\\AnthropicClaude\\' }

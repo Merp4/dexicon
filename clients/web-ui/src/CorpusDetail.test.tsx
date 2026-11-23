@@ -2300,10 +2300,13 @@ describe('the file list', () => {
     expect(screen.getByText(/Searched all 12 files in this corpus/)).toBeInTheDocument();
   });
 
-  it('counts the skipped, failed and pending files among those searched', async () => {
+  it('counts every file of the sources among those searched, not only the indexed ones', async () => {
     // A corpus of 6 indexed files and 7 without text said "Searched all 6 files", while the name filter had
-    // looked at all 13.
-    getCorpus.mockResolvedValue(corpus({ fileCount: 6, skippedCount: 7, failedCount: 2, pendingCount: 3 }));
+    // looked at all 13. The sources' counts include files the set has no state for yet.
+    getCorpus.mockResolvedValue(corpus({
+      fileCount: 6, skippedCount: 7, failedCount: 2, pendingCount: 0,
+      sources: [source({ id: 's1', fileCount: 15 }), source({ id: 's2', kind: 'upload', rootPath: null, fileCount: 3 })],
+    }));
     listFiles.mockResolvedValue({ total: 0, chunkSet: 'default', files: [] });
 
     render(<CorpusDetail {...props} />);

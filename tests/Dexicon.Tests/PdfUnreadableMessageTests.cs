@@ -57,6 +57,15 @@ public sealed class PdfUnreadableMessageTests
     }
 
     [Fact]
+    public void AOneBytePdfSaysOneByte()
+    {
+        var ex = Should.Throw<UnreadableDocumentException>(() =>
+            new PdfTextExtractor().Extract(new MemoryStream("%"u8.ToArray()), "one.pdf"));
+
+        ex.Message.ShouldEndWith("(Not parsed: its one byte does not hold both startxref and %%EOF.)");
+    }
+
+    [Fact]
     public void ATruncatedPdfLongerThanTheTailSaysHowMuchOfItWasRead()
     {
         // Past 4,096 bytes only the tail is read, and the message says which part.
