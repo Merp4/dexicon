@@ -16,6 +16,71 @@ with no section here fails its release rather than publishing an undescribed one
 
 ---
 
+## 0.8.2 — 2026-11-23
+
+### ⚠️ Upgrading
+
+- **Nothing is read or embedded again.** No migration, chunker version or extractor version changed. The OpenAPI documents, the skill
+  (`dexicon-skill-version: 10`) and the hooks are unchanged.
+- **Fewer error-level log entries.** A tool call that Dexicon refuses (an unknown corpus or source, a missing scope, an argument of the wrong
+  shape) is logged at Debug in the category `Dexicon.Mcp`, and the SDK adds `"search_index" completed. IsError = true.` at Information. It
+  was logged at Error with a stack trace, as `"search_index" threw an unhandled exception.` An alert on error entries no longer fires on a
+  client's mistake. The caller receives the same text as before. A refused resource read is still logged at Error, as
+  `ReadResource "<uri>" threw an unhandled exception.`
+- **The truncated-PDF message** for a file of 4,096 bytes or fewer reads "(Not parsed: its 343 bytes do not hold both startxref and %%EOF.)",
+  where it read "the last 343 of its 343 bytes". Stored messages keep the earlier text.
+- **`install-mcp.ps1 -Client claude-desktop` on Windows** exits 1 without writing while the Microsoft Store build of Claude Desktop runs; with
+  `-WhatIf` it warns and continues. On the Store build it writes `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json`. An entry the
+  0.8.1 installer wrote to `%APPDATA%\Claude\claude_desktop_config.json` is not in the file that build reads, and can be removed.
+- **Rolling back to 0.8.1** needs nothing undone.
+
+### Fixed
+
+- **MCP refusals (#380, #381).** A call-tool filter answers a tool's `McpException` with the SDK's own error text and logs it at Debug, as the
+  REST surface logs its refusals. Any other exception, apart from a cancelled call, still reaches the SDK and is logged at Error. See
+  [docs/06](docs/06-mcp-surface.md).
+- **The Files tab's "Searched all N files" hint (#380)**, shown when the name filter matches no file, counts every file of the corpus's
+  sources. It counted the indexed files only, and said 6 for a corpus of 13 files of which 6 were indexed.
+- **An Entity Framework Core warning (#380)**, "The query uses a row limiting operator ('Skip'/'Take') without an 'OrderBy' operator", is
+  no longer logged on the first `get_context` after a start.
+- **Claude Desktop setup (#380).**
+  - [docs/12](docs/12-clients.md) and `scripts/install-mcp.ps1` no longer recommend a custom connector. Anthropic calls one from its cloud,
+    so it cannot reach a Dexicon on `127.0.0.1`.
+  - The installer writes the Microsoft Store build's config, in `%LOCALAPPDATA%\Claude-Data\claude_<id>\`. It follows the
+    `.user-data-left.claude_<id>` marker in `%APPDATA%\Claude` when its folder exists, the newest when there are several, and otherwise
+    writes `%APPDATA%\Claude`.
+  - On Windows the installer stops while Claude Desktop is running. The running app wrote its config back from memory and dropped an entry
+    added meanwhile. The check was measured on the Store build; the installer build's process path was not.
+  - The installer writes the config to depth 100, the most `ConvertTo-Json` takes, where it wrote to depth 10. Past that depth a nested
+    object is written as its type name, and the app's own preferences in that file were 8 levels deep.
+  - `-WhatIf` prints only the entry it adds, without the other servers' credentials.
+  - docs/12 recommends pinning `mcp-remote` to a version, such as `mcp-remote@0.16.7`; `npx -y mcp-remote` runs the newest release at each
+    app start.
+
+### Dependencies
+
+- AngleSharp 1.10.3 to 1.10.5 (#378), which parses HTML documents and EPUB chapters.
+- Microsoft.Extensions.AI, .Abstractions and .OpenAI 10.11.0 to 10.11.1 (#377).
+- lucide-react 1.72.0 to 1.76.0 in the web UI (#375).
+- Test tooling only: the vitest group (#372), @testing-library/user-event (#374), jsdom 31.0.1 (#376).
+
+### Verified against 0.8.1
+
+On the image built for `621182d`, the code of this release; the release commit changes only this file.
+
+- **Upgrade rehearsal** on a copy of the live catalogue taken at the 0.8.1 deploy: 166 checks passed and none failed (the authenticated smoke test, the detach probes,
+  the checks after a restart with seeded stray files, and the evidence checks). The catalogue held 26 migrations before and after, with `PRAGMA integrity_check` ok and 0
+  foreign key violations. 32 probes sent `{}` and `null` to 16 JSON-body operations, and none returned a 5xx. The 0.8.1 image on the same copy gave the same results and
+  logged the same error-level entries: the probes' unreachable embedder, one `UNIQUE constraint failed: blobs.Sha256` logged twice by Entity Framework, and two entries for
+  an index job cancelled by the stop before the restart.
+- **MCP refusals in a running container.** On fresh instances of this image and of 0.8.1, a `search_index` call with the corpus `nosuch` and one with the corpus `7`
+  returned the same text from both. 0.8.1 logged `"search_index" threw an unhandled exception.` at Error for each; this image logged
+  `"search_index" completed. IsError = true.` at Information and no error entry for either.
+- **Tests.** CI's build and test job (the .NET suite, the web UI tests and the typecheck) and CodeQL passed on `621182d`. CI failed on `addab27` (#380) in a test that read
+  the SDK's log lines from the console; #381 replaced it.
+- **Review.** #380 had an independent review by critic agents, and their findings were fixed before merge.
+- **Not run:** the embedding probe and the passes over real documents. No embedding, chunker or extractor version changed.
+
 ## 0.8.1 — 2026-11-22
 
 ### ⚠️ Upgrading
