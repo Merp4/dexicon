@@ -7,8 +7,12 @@ using Dexicon.Core.Configuration;
 using Dexicon.Mcp;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace Dexicon.Tests;
 
@@ -96,16 +100,21 @@ public sealed class McpRefusalLogTests : IDisposable
     private static string ToolText(JsonElement result) =>
         string.Concat(result.GetProperty("content").EnumerateArray().Select(c => c.GetProperty("text").GetString()));
 
+    /// <summary>
+    /// The host registers the filter, and a refusal reaches the caller with the text it had before. Whether the SDK
+    /// then logs an error is not read from the console here: on the Linux CI runner the console captured during a
+    /// host test held Dexicon's request lines and none of the SDK's, so an assertion on its absence passed without
+    /// proving anything. The filter's own behaviour is tested by <see cref="ARefusalIsAnsweredAndLoggedAtDebug"/>.
+    /// </summary>
     [Fact]
-    public async Task ARefusedToolCallReachesTheCallerAsBeforeAndIsNotLoggedAsAnError()
+    public async Task TheHostRegistersTheFilterAndARefusalReachesTheCallerAsBefore()
     {
-        // Before the host starts, as HostLoggingTests does, so the logger built at startup writes here.
-        var captured = new StringWriter();
-        Console.SetOut(captured);
         await using var factory = Start();
         using var client = factory.CreateClient();
         var token = await SignInAsync(client);
-        var before = captured.ToString().Length;
+
+        factory.Services.GetRequiredService<IOptions<McpServerOptions>>().Value.Filters.Request.CallToolFilters
+            .ShouldContain((McpRequestFilter<CallToolRequestParams, CallToolResult>)McpRefusals.Filter);
 
         // Refused in the tool body: a corpus nobody has.
         var unknown = await CallAsync(client, token, """{"name":"search_index","arguments":{"query":"x","corpus":"nosuch"}}""");
@@ -117,18 +126,71 @@ public sealed class McpRefusalLogTests : IDisposable
         ToolText(unknown).ShouldContain("'nosuch'");
         shape.GetProperty("isError").GetBoolean().ShouldBeTrue();
         ToolText(shape).ShouldBe("An error occurred invoking 'search_index': corpus takes a name or a list of names, not a number.");
+    }
 
-        // What was written from the first call on. The host's vector store and embedder are unreachable on purpose,
-        // and its startup logs errors about them, so the check is for the SDK's line about a tool, not for any error.
-        var text = captured.ToString()[before..];
-        var lines = TestText.Lines(text);
-        // The control: the two calls' request lines, written by Dexicon's own middleware. Without them the capture
-        // caught nothing and the absence of the error line below would prove nothing.
-        lines.Count(l => l.Contains("\"POST\" \"/mcp\" -> 200", StringComparison.Ordinal)).ShouldBe(2, text);
-        lines.ShouldNotContain(l => l.Contains("threw an unhandled exception", StringComparison.Ordinal), text);
-        text.ShouldNotContain("McpException", Case.Sensitive, text);
-        // The SDK's template quotes the name and the console's JSON rendering quotes it again.
-        lines.Count(l => l.Contains("INF] \"\"search_index\"\" completed. IsError = true.", StringComparison.Ordinal)).ShouldBe(2, text);
+    /// <summary>
+    /// The SDK logs an exception at Error only when it escapes the call-tool filters (<c>ToolCallError</c> in its
+    /// <c>McpServerImpl</c>). A refusal the filter answers does not escape, and is logged at Debug instead.
+    /// </summary>
+    [Fact]
+    public async Task ARefusalIsAnsweredAndLoggedAtDebug()
+    {
+        var log = new Entries();
+        await using var services = new ServiceCollection()
+            .AddLogging(b => b.AddProvider(log).SetMinimumLevel(LogLevel.Trace)).BuildServiceProvider();
+
+        var result = await McpRefusals.RunAsync("search_index", services,
+            () => throw new McpException("Unknown corpus 'nosuch'."));
+
+        result.IsError.ShouldBe(true);
+        result.Content.OfType<TextContentBlock>().ShouldHaveSingleItem().Text
+            .ShouldBe("An error occurred invoking 'search_index': Unknown corpus 'nosuch'.");
+        log.Written.ShouldHaveSingleItem().ShouldBe((LogLevel.Debug, "Dexicon.Mcp", "Refused search_index: Unknown corpus 'nosuch'."));
+    }
+
+    [Fact]
+    public async Task AFaultEscapesTheFilterUnloggedSoTheSdkLogsIt()
+    {
+        var log = new Entries();
+        await using var services = new ServiceCollection()
+            .AddLogging(b => b.AddProvider(log).SetMinimumLevel(LogLevel.Trace)).BuildServiceProvider();
+
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await McpRefusals.RunAsync("search_index", services, () => throw new InvalidOperationException("the store went away")));
+        await Should.ThrowAsync<McpProtocolException>(async () =>
+            await McpRefusals.RunAsync("search_index", services, () => throw new McpProtocolException("Unknown tool", McpErrorCode.InvalidParams)));
+
+        log.Written.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AToolThatSucceedsIsReturnedAsItIs()
+    {
+        var answer = new CallToolResult { Content = [new TextContentBlock { Text = "3 results" }] };
+
+        (await McpRefusals.RunAsync("search_index", null, () => ValueTask.FromResult(answer))).ShouldBeSameAs(answer);
+    }
+
+    private sealed class Entries : ILoggerProvider
+    {
+        public List<(LogLevel Level, string Category, string Text)> Written { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new Category(this, categoryName);
+
+        public void Dispose() { }
+
+        private sealed class Category(Entries owner, string name) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                lock (owner.Written) owner.Written.Add((logLevel, name, formatter(state, exception)));
+            }
+        }
     }
 
     [Fact]
