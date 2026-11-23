@@ -30,19 +30,27 @@ internal static class McpRefusals
 {
     /// <summary>The call-tool filter Program.cs registers.</summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> Filter(
-        McpRequestHandler<CallToolRequestParams, CallToolResult> next) => async (context, ct) =>
+        McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
+        (context, ct) => RunAsync(context.Params?.Name, context.Services, () => next(context, ct));
+
+    /// <summary>
+    /// Runs the tool, and answers a refusal with <see cref="AsResult"/> and a Debug entry in the category
+    /// <c>Dexicon.Mcp</c>. Any other exception goes on to the SDK.
+    /// </summary>
+    internal static async ValueTask<CallToolResult> RunAsync(
+        string? tool, IServiceProvider? services, Func<ValueTask<CallToolResult>> next)
     {
         try
         {
-            return await next(context, ct);
+            return await next();
         }
-        catch (Exception ex) when (AsResult(context.Params?.Name, ex) is { } refused)
+        catch (Exception ex) when (AsResult(tool, ex) is { } refused)
         {
-            context.Services?.GetService<ILoggerFactory>()?.CreateLogger("Dexicon.Mcp")
-                .LogDebug("Refused {Tool}: {Reason}", LogText.OneLine(context.Params?.Name ?? ""), LogText.OneLine(ex.Message));
+            services?.GetService<ILoggerFactory>()?.CreateLogger("Dexicon.Mcp")
+                .LogDebug("Refused {Tool}: {Reason}", LogText.OneLine(tool ?? ""), LogText.OneLine(ex.Message));
             return refused;
         }
-    };
+    }
 
     /// <summary>
     /// The error result for a refusal, with the text the SDK writes for one, or null for an exception that is not
